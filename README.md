@@ -22,7 +22,7 @@ This repository contains a collection of experimental custom nodes for ComfyUI.
 Here is a list of the custom nodes included in this package:
 
 *   **Neurogrid Overload (Holaf)**
-    *   *Function:* Tetris clone that will kill your frame or crash. (avoid keeping it in a workflow)
+    *   *Function:* Tetris clone that will kill your framerate or crash. (avoid keeping it in a workflow)
 *   **Tile Calculator (Holaf)**
     *   *Function:* Calculates parameters needed for processing images in tiles (e.g., dimensions, overlap).
 *   **Slice Calculator (Holaf)**
