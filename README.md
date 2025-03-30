@@ -22,21 +22,21 @@ This repository contains a collection of experimental custom nodes for ComfyUI.
 Here is a list of the custom nodes included in this package:
 
 *   **Neurogrid Overload (Holaf)**
-    *   *Function:* Likely applies or modifies Neurogrid-related effects or parameters.
+    *   *Function:* Tetris clone that will kill your frame or crash. (avoid keeping it in a workflow)
 *   **Tile Calculator (Holaf)**
     *   *Function:* Calculates parameters needed for processing images in tiles (e.g., dimensions, overlap).
 *   **Slice Calculator (Holaf)**
-    *   *Function:* Similar to the Tile Calculator, likely calculates parameters for slicing images or tensors.
+    *   *Function:* Similar to the Tile Calculator, calculates parameters for slicing images.
 *   **Save Image (Holaf)**
-    *   *Function:* Provides options for saving images, potentially with custom naming or metadata handling.
+    *   *Function:* Provides options for saving images, with separate json and txt files for workflow and prompt.
 *   **Tiled KSampler (Holaf)**
     *   *Function:* Implements the KSampler algorithm specifically designed to work on image tiles, useful for high-resolution generation.
 *   **KSampler (Holaf)**
-    *   *Function:* A KSampler implementation, potentially with minor modifications (like the added progress bar).
+    *   *Function:* A KSampler implementation, with minor modifications.
 *   **Image Comparer (Holaf)**
     *   *Function:* Allows comparing two images side-by-side within the ComfyUI interface.
 *   **Upscale (Holaf)**
-    *   *Function:* Upscales an input image using a specified model or method.
+    *   *Function:* Upscales an input image to a MP count using a specified model or method.
 
 ---
 
