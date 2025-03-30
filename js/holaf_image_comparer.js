@@ -679,9 +679,9 @@ class HolafImageComparer extends HolafBaseServerNode {
     static setUp(comfyClass, nodeData) { HolafBaseServerNode.registerForOverride(comfyClass, nodeData, HolafImageComparer); }
     static onRegisteredForOverride(comfyClass) { setTimeout(() => { HolafImageComparer.category = comfyClass.category; }); }
 }
-HolafImageComparer.title = "test comparer"; // New Name
-HolafImageComparer.type = "test comparer"; // New Name
-HolafImageComparer.comfyClass = "test comparer"; // New Name
+HolafImageComparer.title = "image comparer (holaf)"; // Updated Name
+HolafImageComparer.type = "HolafImageComparer"; // Use Class Name
+HolafImageComparer.comfyClass = "HolafImageComparer"; // Use Class Name
 HolafImageComparer["@comparer_mode"] = { type: "combo", values: ["Slide", "Click"] };
 
 

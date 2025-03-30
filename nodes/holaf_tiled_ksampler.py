@@ -65,7 +65,7 @@ class HolafTiledKSampler:
                 "negative": ("CONDITIONING",),
                 "vae": ("VAE",),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "control_after_generate": (["fixed", "increment", "decrement", "randomize"], {"default": "randomize"}), # Re-added
+                # "control_after_generate": (["fixed", "increment", "decrement", "randomize"], {"default": "randomize"}), # Removed duplicate
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                 "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
                 "sampler_name": (samplers,),
@@ -126,7 +126,7 @@ class HolafTiledKSampler:
 
 
     def sample_tiled(self, model: ModelPatcher, positive, negative, vae,
-                     seed, control_after_generate, steps, cfg, sampler_name, scheduler, denoise,
+                     seed, steps, cfg, sampler_name, scheduler, denoise, # Removed control_after_generate
                      input_type, max_tile_size, overlap_size, # Removed batch_size and use_sliced_conditioning
                      latent_image=None, image=None):
 
@@ -264,14 +264,15 @@ class HolafTiledKSampler:
 
                 # --- Perform Sampling on Tile ---
                 # Note: We might need to adjust seed per tile if desired, or use the main seed
-                tile_seed = seed # For now, use the same seed for all tiles
-                if control_after_generate == 'increment':
-                    seed += 1
-                elif control_after_generate == 'decrement':
-                    seed -= 1
-                elif control_after_generate == 'randomize': # Correct indentation
-                    # Use max signed int64 as the upper bound to avoid overflow
-                     seed = np.random.randint(0, 0x7fffffffffffffff)
+                # The control_after_generate logic was tied to the removed input, so it's commented out/removed.
+                # If seed control per tile is needed, it should be re-implemented based on a valid input.
+                tile_seed = seed # Use the main seed for all tiles for now
+                # if control_after_generate == 'increment':
+                #     seed += 1
+                # elif control_after_generate == 'decrement':
+                #     seed -= 1
+                # elif control_after_generate == 'randomize':
+                #     seed = np.random.randint(0, 0x7fffffffffffffff)
 
 
                 # tile_noise is already on the device from the prepare_noise call + .to(device)

@@ -50,7 +50,7 @@ class HolafImageComparer(PreviewImage):
   """A node that compares two images in the UI."""
 
   # Set name directly, bypassing get_name to avoid namespace suffix
-  NAME = 'test comparer'
+  NAME = 'image comparer (holaf)'
   CATEGORY = get_category() # Keep category helper for now
   FUNCTION = "compare_images"
 
@@ -93,7 +93,7 @@ class HolafImageComparer(PreviewImage):
 # --- Export Mapping ---
 # This mapping will be imported by __init__.py
 NODE_CLASS_MAPPINGS = {
-  'test comparer': HolafImageComparer, # Use the new name as the key
+  'HolafImageComparer': HolafImageComparer, # Use the class name as the key
 }
 
 # Optional: Add a log message for when this module is loaded if desired
