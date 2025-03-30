@@ -8,6 +8,8 @@ import comfy.samplers
 import comfy.utils
 import comfy.model_management
 from comfy.model_patcher import ModelPatcher
+import server # Import the server instance (though might become unused)
+# Removed base64, io, Image imports
 
 # Tensor related imports might be needed later
 # from comfy.ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, make_ddim_timesteps, noise_like
@@ -104,8 +106,6 @@ class HolafKSampler:
         elif input_type == "image":
             if image is None:
                 raise ValueError("Input type is 'image', but no image provided.")
-            if image is None:
-                raise ValueError("Input type is 'image', but no image provided.")
             # Perform encoding
             if hasattr(vae, 'encode_pil_to_latent'):
                  encoded_output = vae.encode_pil_to_latent(image)
@@ -143,13 +143,25 @@ class HolafKSampler:
         # Clone the model
         model_copy = model.clone()
 
+        # --- Define Preview Callback ---
+        preview_every_n_steps = 1 # Or adjust for performance
+        pbar = comfy.utils.ProgressBar(steps)
+        server_instance = server.PromptServer.instance
+
+        def preview_callback(step, x0, x, total_steps):
+            # Update progress bar
+            pbar.update(1)
+            # Only update the progress bar in the callback
+            # Removed all image decoding, processing, and sending logic
+
+
         # --- Perform Standard Sampling ---
         # Use the prepared noise, conditioning, and latent samples directly
         sampled_output = comfy.sample.sample(model_copy, noise, steps, cfg, sampler_name, scheduler,
                                              positive_copy, negative_copy, latent_samples, # Use prepared inputs
                                              denoise=denoise, disable_noise=False, start_step=None,
                                              last_step=None, force_full_denoise=False, noise_mask=None,
-                                             callback=None, disable_pbar=False, seed=seed) # Enable pbar for single sample
+                                             callback=preview_callback, disable_pbar=True, seed=seed) # Pass callback, disable default pbar
 
         # --- Handle Output ---
         if torch.is_tensor(sampled_output):
