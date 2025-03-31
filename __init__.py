@@ -8,6 +8,7 @@ from .nodes.holaf_tiled_ksampler import HolafTiledKSampler # Renamed import
 from .nodes.holaf_ksampler import HolafKSampler # Added import for the new KSampler
 from .nodes.holaf_image_comparer import HolafImageComparer # Updated import path and class name
 from .nodes.holaf_upscale_image import UpscaleImageHolaf # Added import for Upscale node
+from .nodes.holaf_overlay import HolafOverlayNode # Added import for Overlay node
 # Removed import for HolafImageCompare
 # Removed import for HolafAnyToText
 
@@ -22,6 +23,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafKSampler": HolafKSampler, # Added mapping for the new KSampler
     'HolafImageComparer': HolafImageComparer, # Use Class Name as key
     "UpscaleImageHolaf": UpscaleImageHolaf, # Added mapping for Upscale node
+    "HolafOverlayNode": HolafOverlayNode, # Added mapping for Overlay node
     # Removed mapping for HolafImageCompare
     # Removed mapping for HolafAnyToText
 }
@@ -37,6 +39,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafKSampler": "KSampler (Holaf)", # Added display name for the new KSampler
     'HolafImageComparer': "Image Comparer (Holaf)", # Updated key and display name
     "UpscaleImageHolaf": "Upscale (Holaf)", # Added display name for Upscale node
+    "HolafOverlayNode": "Overlay (Holaf)", # Added display name for Overlay node
     # Removed display name for HolafImageCompare
     # Removed display name for HolafAnyToText
 }
