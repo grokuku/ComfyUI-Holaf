@@ -6,7 +6,22 @@ import folder_paths
 import comfy.samplers
 import comfy.sample
 import comfy.model_management
+# import comfy.sd # No longer needed here
 import nodes as comfy_nodes # Import the nodes module to potentially reuse EmptyLatentImage logic
+import platform
+import math
+import io
+import csv
+import re # For parsing resolutions
+import os # For basename
+
+# Attempt to import psutil, handle if not found
+try:
+    import psutil
+    psutil_available = True
+except ImportError:
+    psutil_available = False
+    print("[HolafBenchmarkRunner] Warning: 'psutil' library not found. CPU/RAM details will be limited. Install with 'pip install psutil'.")
 
 # ==================================================================================
 # HolafBenchmarkRunner Node - Documentation
@@ -34,47 +49,47 @@ import nodes as comfy_nodes # Import the nodes module to potentially reuse Empty
 #       if a real model is strictly required by the chosen sampler internally).
 #    - Records the end time.
 #    - Calculates duration and pixels per second.
-# 5. Saves all results (Resolution, Steps, Sampler, Scheduler, Time (s), Pixels/s)
-#    to a CSV file in the ComfyUI `output` directory.
-# 6. Returns the path to the generated CSV file.
+# 5. Collects system information (OS, CPU, RAM, GPU) and model details (name, inferred family).
+# 6. Saves all results (Resolution, Steps, Sampler, Scheduler, Time (s), Pixels/s,
+#    Model Name, Model Family, CPU, RAM (GB), GPU, GPU Memory (GB), OS)
+#    to a CSV string.
+# 7. Returns the generated CSV data as a string, containing results for one or both models.
 #
 # Inputs:
-# - model (MODEL): The model to use for the benchmark (influences sampler behavior).
+# - holaf_model_info_list (HOLAF_MODEL_INFO_LIST): A list containing one or two tuples.
+#   Each tuple is (model_object, ckpt_name_string) (from HolafBenchmarkLoader).
 # - resolutions (STRING): Comma-separated list of resolutions and/or ranges.
 #   Examples: "512, 1024", "512-1024:128", "512, 768-1024:128, 2048"
-#   Range format: "start-end:step". Step is optional, defaults to 64 or similar if omitted? (Let's require step for now).
+#   Range format: "start-end:step". Step is required.
 # - steps (INT): Number of sampling steps.
 # - sampler_name (COMBO): The sampler to use.
 # - scheduler (COMBO): The scheduler to use.
-# - trigger (BOOLEAN): A toggle acting as a button to start the benchmark process on queue.
 #
 # Outputs:
-# - report_text (STRING): The benchmark results formatted as a CSV string.
+# - report_text (STRING): The benchmark results formatted as a CSV string, including system and model info.
 #
 # Dependencies:
-# - Requires standard Python libraries (time, csv, os).
+# - Requires standard Python libraries (time, csv, os, platform, math, io, re).
+# - Requires `psutil` for detailed CPU/RAM info (optional, provides limited info otherwise).
 # - Relies on ComfyUI's internal modules (torch, folder_paths, comfy.samplers, comfy.sample, comfy.model_management).
 #
 # ==================================================================================
-import re # For parsing resolutions
 
 class HolafBenchmarkRunner:
     def __init__(self):
-        pass # No need for output_dir anymore
+        pass
 
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "model": ("MODEL",),
+                "holaf_model_info_list": ("HOLAF_MODEL_INFO_LIST",), # Takes the custom list input type
                 "resolutions": ("STRING", {"default": "512, 768-1024:128", "multiline": False}),
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                 "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
                 "scheduler": (comfy.samplers.KSampler.SCHEDULERS, ),
-                # Using a custom widget name that hopefully triggers execution
-                "trigger": ("BOOLEAN", {"default": False, "label_on": "RUN BENCHMARK", "label_off": "RUN BENCHMARK"}),
+                # Removed trigger input
             },
-            # No optional inputs anymore
         }
 
     RETURN_TYPES = ("STRING",)
@@ -141,130 +156,295 @@ class HolafBenchmarkRunner:
         print(f"[HolafBenchmarkRunner] Final resolutions to test: {unique_sorted_resolutions}")
         return unique_sorted_resolutions
 
-    def run_benchmark(self, model, resolutions, steps, sampler_name, scheduler, trigger):
-        # The 'trigger' parameter ensures this runs when queued after the button is pressed.
+    def _bytes_to_gb(self, b):
+        """Converts bytes to gigabytes."""
+        if b is None or b == 0:
+            return 0.0
+        return round(b / (1024**3), 2)
 
+    def _infer_model_family(self, model_name):
+        """Attempts to infer model family from its name."""
+        if not model_name:
+            return "Unknown"
+        name_lower = model_name.lower()
+        if "sdxl" in name_lower or "sd_xl" in name_lower:
+            return "SDXL"
+        elif "sd15" in name_lower or "sd_15" in name_lower or "v1-5" in name_lower:
+             # Check for specific SD1.5 variants before general SD1.5
+             if "inpainting" in name_lower:
+                 return "SD1.5-Inpainting"
+             else:
+                 return "SD1.5"
+        elif "sd21" in name_lower or "sd_21" in name_lower or "v2-1" in name_lower:
+             return "SD2.1"
+        elif "sd2" in name_lower or "sd_2" in name_lower or "v2-0" in name_lower: # Check after 2.1
+             return "SD2.0"
+        elif "turbo" in name_lower:
+             return "Turbo" # Could be SDXL Turbo or SD Turbo
+        elif "lcm" in name_lower:
+             return "LCM"
+        elif "pony" in name_lower:
+             return "Pony"
+        # Add more rules as needed
+        else:
+            return "Unknown" # Default if no keywords match
+
+    def _get_system_and_model_info(self, ckpt_name):
+        """Collects system and model information based on checkpoint name."""
+        info = {
+            "model_name": ckpt_name if ckpt_name else "N/A",
+            "model_family": "N/A",
+            "cpu": "N/A",
+            "ram_gb": "N/A",
+            "gpu": "N/A",
+            "gpu_mem_gb": "N/A",
+            "os": "N/A",
+        }
+
+        # --- Model Info (derived from ckpt_name) ---
+        info["model_family"] = self._infer_model_family(info["model_name"])
+
+        # --- System Info ---
+        try:
+            info["os"] = f"{platform.system()} {platform.release()}"
+        except Exception as e:
+            print(f"[HolafBenchmarkRunner] Warning: Error getting OS info: {e}")
+
+        try:
+            cpu_name = platform.processor() if hasattr(platform, 'processor') and platform.processor() else platform.machine()
+            cpu_cores = psutil.cpu_count(logical=True) if psutil_available else '?'
+            info["cpu"] = f"{cpu_name} ({cpu_cores} cores)"
+        except Exception as e:
+            print(f"[HolafBenchmarkRunner] Warning: Error getting CPU info: {e}")
+
+        try:
+            if psutil_available:
+                mem = psutil.virtual_memory()
+                info["ram_gb"] = self._bytes_to_gb(mem.total)
+            else:
+                info["ram_gb"] = "N/A (psutil missing)"
+        except Exception as e:
+            print(f"[HolafBenchmarkRunner] Warning: Error getting RAM info: {e}")
+
+        try:
+            if torch.cuda.is_available():
+                gpu_id = torch.cuda.current_device()
+                info["gpu"] = torch.cuda.get_device_name(gpu_id)
+                props = torch.cuda.get_device_properties(gpu_id)
+                info["gpu_mem_gb"] = self._bytes_to_gb(props.total_memory)
+            else:
+                info["gpu"] = "No CUDA GPU detected"
+                info["gpu_mem_gb"] = 0.0
+        except Exception as e:
+            print(f"[HolafBenchmarkRunner] Warning: Error getting GPU info: {e}")
+            info["gpu"] = "Error detecting GPU"
+            info["gpu_mem_gb"] = "Error"
+
+        print(f"[HolafBenchmarkRunner] System Info: OS={info['os']}, CPU={info['cpu']}, RAM={info['ram_gb']}GB, GPU={info['gpu']} ({info['gpu_mem_gb']}GB)")
+        print(f"[HolafBenchmarkRunner] Model Info: Name={info['model_name']}, Family={info['model_family']}")
+        return info
+
+    # Changed signature: takes the list of model info tuples
+    def run_benchmark(self, holaf_model_info_list, resolutions, steps, sampler_name, scheduler):
+        # --- Validate Input List ---
+        if not isinstance(holaf_model_info_list, list) or not holaf_model_info_list:
+            print(f"[HolafBenchmarkRunner] Error: Invalid input type or empty list for holaf_model_info_list. Expected list of tuples. Got: {type(holaf_model_info_list)}")
+            return ("",)
+
+        # --- Parse Resolutions (once) ---
         parsed_resolutions = self.parse_resolutions(resolutions)
         if not parsed_resolutions:
             print("[HolafBenchmarkRunner] Error: No valid resolutions to test.")
             return ("",) # Return empty string on error
 
-        results_data = []
-        # Header for CSV data
-        header = ["Resolution", "Steps", "Sampler", "Scheduler", "Time (s)", "Pixels/s"]
-        results_data.append(header)
+        # --- Collect System Info Once ---
+        # We get model info inside the loop now, but system info is constant
+        # Need a dummy ckpt_name just to call the function structure
+        # Or better, refactor _get_system_and_model_info
+        # Let's refactor: separate system info collection
+        system_info_dict = self._get_system_info_only()
 
-        # --- Prepare inputs for comfy.sample.sample ---
-        # Use the provided model.
-        # Still need minimal conditioning as samplers expect it.
+        results_data = []
+        # Header for CSV data - Extended
+        header = [
+            "Resolution", "Steps", "Sampler", "Scheduler", "Time (s)", "Pixels/s",
+            "Model Name", "Model Family", "CPU", "RAM (GB)", "GPU", "GPU Memory (GB)", "OS"
+        ]
+        results_data.append(header) # Add header once
+
         device = comfy.model_management.get_torch_device()
         batch_size = 1
+        overall_start_time = time.perf_counter()
 
-        # Determine conditioning dimension from the model if possible, default otherwise
-        cond_dim = 768 # Default SD1.5/SD2
-        if hasattr(model, 'model') and hasattr(model.model, 'embedding_dim'): # Basic check
-             try:
-                 cond_dim = model.model.embedding_dim
-                 print(f"[HolafBenchmarkRunner] Inferred cond_dim from model: {cond_dim}")
-             except Exception:
-                 print(f"[HolafBenchmarkRunner] Could not infer cond_dim, using default: {cond_dim}")
+        # --- Loop through each model provided ---
+        for model_index, model_info_tuple in enumerate(holaf_model_info_list):
 
-        # Minimal conditioning tensors
-        # Using zeros might be sufficient for timing, but check if specific samplers fail.
-        positive_cond = [[torch.zeros([batch_size, 77, cond_dim], device=device), {}]] # Simplified structure
-        negative_cond = [[torch.zeros([batch_size, 77, cond_dim], device=device), {}]]
+            if not isinstance(model_info_tuple, tuple) or len(model_info_tuple) != 2:
+                print(f"[HolafBenchmarkRunner] Warning: Skipping invalid item in input list at index {model_index}. Expected tuple(model, ckpt_name).")
+                continue
 
-        print(f"[HolafBenchmarkRunner] Starting benchmark for {len(parsed_resolutions)} resolutions...")
+            model, ckpt_name = model_info_tuple
 
-        total_start_time = time.perf_counter()
-
-        for i, res in enumerate(parsed_resolutions):
-            width = res
-            height = res
-            # Ensure latent dimensions are valid (at least 1x1 after division by 8)
-            latent_height = max(1, height // 8)
-            latent_width = max(1, width // 8)
-            latent_image = torch.zeros([batch_size, 4, latent_height, latent_width], device=device)
-            # latent = {"samples": latent_image} # KSampler takes latent_image directly now
-
-            print(f"[HolafBenchmarkRunner] ({i+1}/{len(parsed_resolutions)}) Testing resolution: {width}x{height}")
-
-            # Initialize the KSampler *inside* the loop?
-            # Or outside if model doesn't change? Let's keep it outside for efficiency.
-            # Need to ensure KSampler instance is created correctly with the real model.
-            try:
-                # Create KSampler instance once before the loop if possible
-                # However, some internal state might depend on latent size? Re-creating might be safer.
-                 sampler = comfy.samplers.KSampler(
-                    model=model, # Use the provided model object
-                    steps=steps,
-                    device=device,
-                    sampler=sampler_name,
-                    scheduler=scheduler,
-                    denoise=1.0, # Denoise fully for measurement? Yes, for consistent timing.
-                    model_options=model.model_options # Pass model options along
-                )
-            except Exception as e:
-                 print(f"[HolafBenchmarkRunner] Error initializing KSampler for {sampler_name}/{scheduler} with provided model: {e}")
-                 print(f"[HolafBenchmarkRunner] Skipping resolution {res}x{res}.")
-                 # Use header names for clarity when adding error row
-                 results_data.append([f"{res}x{res}", steps, sampler_name, scheduler, "Init Error", "Error"])
+            # Validate model and name again inside the loop
+            if model is None:
+                 print(f"[HolafBenchmarkRunner] Warning: Skipping benchmark for item at index {model_index} due to None model object.")
                  continue
+            if not ckpt_name or not isinstance(ckpt_name, str):
+                 print(f"[HolafBenchmarkRunner] Warning: Invalid ckpt_name ('{ckpt_name}') for item at index {model_index}. Using placeholder.")
+                 ckpt_name = f"Unknown Model {model_index+1}"
 
-            # --- Run the sampling process and time it ---
-            # Ensure model is loaded if necessary (ComfyUI might handle this)
-            # comfy.model_management.load_model_gpu(model) # Is this needed here? Probably handled by workflow execution.
+            print(f"\n[HolafBenchmarkRunner] === Starting Benchmark for Model {model_index+1}: {ckpt_name} ===")
 
-            comfy.model_management.throw_exception_if_processing_interrupted()
-            start_time = time.perf_counter()
+            # --- Get Model Specific Info ---
+            model_family = self._infer_model_family(ckpt_name)
+            print(f"[HolafBenchmarkRunner] Model Info: Name={ckpt_name}, Family={model_family}")
 
-            try:
-                seed = 0 # Fixed seed for consistency
-                cfg = 1.0 # Minimal CFG - adjust if needed for specific samplers, but keep low for pure speed test
-                noise = comfy.sample.prepare_noise(latent_image, seed) # Generate noise based on latent shape
-                disable_pbar = True # No progress bar
+            # --- Prepare inputs for comfy.sample.sample (potentially model-specific) ---
+            # Determine conditioning dimension and pooled dimension based on model family
+            cond_dim = 768 # Default SD1.5/SD2
+            pooled_dim = 1280 # Default SDXL pooled output dimension
 
-                # Call the sampler's sample method directly
-                _ = sampler.sample(
-                    noise=noise,
-                    positive=positive_cond,
-                    negative=negative_cond,
-                    cfg=cfg,
-                    latent_image=latent_image,
-                    start_step=0,
-                    last_step=steps,
-                    force_full_denoise=False, # Standard behavior
-                    denoise_mask=None,
-                    sigmas=None, # Let KSampler handle sigmas based on scheduler/steps
-                    callback=None,
-                    disable_pbar=disable_pbar,
-                    seed=seed
-                )
-                # We ignore the output latent samples (_)
+            if model_family == "SDXL":
+                cond_dim = 2048 # Explicitly set for SDXL
+                # pooled_dim remains 1280 (default for SDXL base)
+                print(f"[HolafBenchmarkRunner] Setting cond_dim={cond_dim} and pooled_dim={pooled_dim} for SDXL family.")
+            else:
+                # Try to infer for non-SDXL models if needed, but 768 is usually correct
+                try:
+                    inferred_cond_dim = cond_dim # Start with default
+                    if hasattr(model, 'model') and hasattr(model.model, 'token_embedding') and hasattr(model.model.token_embedding, 'weight'):
+                        inferred_cond_dim = model.model.token_embedding.weight.shape[-1]
+                        print(f"[HolafBenchmarkRunner] Attempted inference via token_embedding for non-SDXL: {inferred_cond_dim}")
+                    elif hasattr(model, 'model') and hasattr(model.model, 'embedding_dim'):
+                         inferred_cond_dim = model.model.embedding_dim
+                         print(f"[HolafBenchmarkRunner] Attempted inference via embedding_dim attribute for non-SDXL: {inferred_cond_dim}")
 
-            except Exception as e:
-                end_time = time.perf_counter() # Stop timer even on error
+                    if inferred_cond_dim != cond_dim:
+                         print(f"[HolafBenchmarkRunner] Updating cond_dim for non-SDXL model to inferred value: {inferred_cond_dim}")
+                         cond_dim = inferred_cond_dim
+                    else:
+                         print(f"[HolafBenchmarkRunner] Using default cond_dim ({cond_dim}) for non-SDXL model.")
+
+                except Exception as e:
+                    print(f"[HolafBenchmarkRunner] Error inferring cond_dim for non-SDXL, using default {cond_dim}: {e}")
+
+
+            model_start_time = time.perf_counter()
+
+            # --- Loop through resolutions for the current model ---
+            for i, res in enumerate(parsed_resolutions):
+                width = res
+                height = res
+                latent_height = max(1, height // 8)
+                latent_width = max(1, width // 8)
+                latent_image = torch.zeros([batch_size, 4, latent_height, latent_width], device=device)
+
+                print(f"[HolafBenchmarkRunner] ({i+1}/{len(parsed_resolutions)}) Testing resolution: {width}x{height} for '{ckpt_name}'")
+
+                # --- Create model-specific conditioning ---
+                cond_dict = {}
+                if model_family == "SDXL":
+                    cond_dict = {
+                        "pooled_output": torch.zeros([batch_size, pooled_dim], device=device),
+                        "width": width,
+                        "height": height,
+                        "target_width": width, # Use benchmark resolution for target
+                        "target_height": height # Use benchmark resolution for target
+                    }
+                    print(f"[HolafBenchmarkRunner] Using SDXL conditioning dict for {width}x{height}")
+                else:
+                    # For non-SDXL models, the dict remains empty
+                    pass
+
+                # Create the final conditioning structures
+                positive_cond = [[torch.zeros([batch_size, 77, cond_dim], device=device), cond_dict]]
+                negative_cond = [[torch.zeros([batch_size, 77, cond_dim], device=device), cond_dict]]
+
+                # Initialize KSampler for the current model
+                try:
+                     sampler = comfy.samplers.KSampler(
+                        model=model, # Use the current model object
+                        steps=steps,
+                        device=device,
+                        sampler=sampler_name,
+                        scheduler=scheduler,
+                        denoise=1.0,
+                        model_options=model.model_options
+                    )
+                except Exception as e:
+                     print(f"[HolafBenchmarkRunner] Error initializing KSampler for {sampler_name}/{scheduler} with model '{ckpt_name}': {e}")
+                     print(f"[HolafBenchmarkRunner] Skipping resolution {res}x{res} for this model.")
+                     error_row = [
+                         f"{res}x{res}", steps, sampler_name, scheduler, "Init Error", "Error",
+                         ckpt_name, model_family, system_info_dict["cpu"],
+                         system_info_dict["ram_gb"], system_info_dict["gpu"], system_info_dict["gpu_mem_gb"], system_info_dict["os"]
+                     ]
+                     results_data.append(error_row)
+                     continue
+
+                # --- Run the sampling process and time it ---
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                start_time = time.perf_counter()
+
+                try:
+                    seed = 0
+                    cfg = 1.0
+                    noise = comfy.sample.prepare_noise(latent_image, seed)
+                    disable_pbar = True
+
+                    _ = sampler.sample(
+                        noise=noise,
+                        positive=positive_cond,
+                        negative=negative_cond,
+                        cfg=cfg,
+                        latent_image=latent_image,
+                        start_step=0,
+                        last_step=steps,
+                        force_full_denoise=False,
+                        denoise_mask=None,
+                        sigmas=None,
+                        callback=None,
+                        disable_pbar=disable_pbar,
+                        seed=seed
+                    )
+
+                except Exception as e:
+                    end_time = time.perf_counter()
+                    duration = end_time - start_time
+                    print(f"[HolafBenchmarkRunner] Error during sampling for {res}x{res} with model '{ckpt_name}': {e}")
+                    error_row = [
+                        f"{res}x{res}", steps, sampler_name, scheduler, f"Sample Error ({duration:.3f}s)", "Error",
+                        ckpt_name, model_family, system_info_dict["cpu"],
+                        system_info_dict["ram_gb"], system_info_dict["gpu"], system_info_dict["gpu_mem_gb"], system_info_dict["os"]
+                    ]
+                    results_data.append(error_row)
+                    continue # Skip to next resolution for this model
+
+                end_time = time.perf_counter()
+                # --- Calculation ---
                 duration = end_time - start_time
-                print(f"[HolafBenchmarkRunner] Error during sampling for {res}x{res}: {e}")
-                results_data.append([f"{res}x{res}", steps, sampler_name, scheduler, f"Sample Error ({duration:.3f}s)", "Error"])
-                # Record the error and continue
-                continue # Skip to next resolution
+                pixels = width * height
+                pixels_per_second = pixels / duration if duration > 0 else 0
 
-            end_time = time.perf_counter()
-            # --- Calculation ---
-            duration = end_time - start_time
-            pixels = width * height
-            pixels_per_second = pixels / duration if duration > 0 else 0
+                print(f"[HolafBenchmarkRunner] Resolution {width}x{height} took {duration:.3f} seconds ({pixels_per_second:.2f} Pixels/s) for '{ckpt_name}'")
+                # Append results row including system/model info
+                results_row = [
+                    f"{res}x{res}", steps, sampler_name, scheduler, f"{duration:.3f}", f"{pixels_per_second:.2f}",
+                    ckpt_name, model_family, system_info_dict["cpu"],
+                    system_info_dict["ram_gb"], system_info_dict["gpu"], system_info_dict["gpu_mem_gb"], system_info_dict["os"]
+                ]
+                results_data.append(results_row)
 
-            print(f"[HolafBenchmarkRunner] Resolution {width}x{height} took {duration:.3f} seconds ({pixels_per_second:.2f} Pixels/s)")
-            results_data.append([f"{res}x{res}", steps, sampler_name, scheduler, f"{duration:.3f}", f"{pixels_per_second:.2f}"])
+                # Optional small sleep?
+                # time.sleep(0.05)
 
-            # Optional small sleep? Probably not needed unless hitting weird resource limits.
-            # time.sleep(0.05)
+            model_end_time = time.perf_counter()
+            print(f"[HolafBenchmarkRunner] === Benchmark for Model {model_index+1}: {ckpt_name} finished in {model_end_time - model_start_time:.3f} seconds ===")
+            # --- End loop for resolutions ---
+        # --- End loop for models ---
 
-        total_end_time = time.perf_counter()
-        total_duration = total_end_time - total_start_time
-        print(f"[HolafBenchmarkRunner] Benchmark finished in {total_duration:.3f} seconds.")
+        overall_end_time = time.perf_counter()
+        print(f"\n[HolafBenchmarkRunner] All benchmarks finished in {overall_end_time - overall_start_time:.3f} seconds.")
 
         # --- Format results as CSV string ---
         output_string = io.StringIO()
@@ -276,11 +456,56 @@ class HolafBenchmarkRunner:
         # Return the report string
         return (report_text,)
 
-# Node class mappings for ComfyUI
-# Need to import io and csv at the top
-import io
-import csv
+    def _get_system_info_only(self):
+        """Collects only system information."""
+        info = {
+            "cpu": "N/A",
+            "ram_gb": "N/A",
+            "gpu": "N/A",
+            "gpu_mem_gb": "N/A",
+            "os": "N/A",
+        }
+        # --- System Info ---
+        try:
+            info["os"] = f"{platform.system()} {platform.release()}"
+        except Exception as e:
+            print(f"[HolafBenchmarkRunner] Warning: Error getting OS info: {e}")
 
+        try:
+            cpu_name = platform.processor() if hasattr(platform, 'processor') and platform.processor() else platform.machine()
+            cpu_cores = psutil.cpu_count(logical=True) if psutil_available else '?'
+            info["cpu"] = f"{cpu_name} ({cpu_cores} cores)"
+        except Exception as e:
+            print(f"[HolafBenchmarkRunner] Warning: Error getting CPU info: {e}")
+
+        try:
+            if psutil_available:
+                mem = psutil.virtual_memory()
+                info["ram_gb"] = self._bytes_to_gb(mem.total)
+            else:
+                info["ram_gb"] = "N/A (psutil missing)"
+        except Exception as e:
+            print(f"[HolafBenchmarkRunner] Warning: Error getting RAM info: {e}")
+
+        try:
+            if torch.cuda.is_available():
+                gpu_id = torch.cuda.current_device()
+                info["gpu"] = torch.cuda.get_device_name(gpu_id)
+                props = torch.cuda.get_device_properties(gpu_id)
+                info["gpu_mem_gb"] = self._bytes_to_gb(props.total_memory)
+            else:
+                info["gpu"] = "No CUDA GPU detected"
+                info["gpu_mem_gb"] = 0.0
+        except Exception as e:
+            print(f"[HolafBenchmarkRunner] Warning: Error getting GPU info: {e}")
+            info["gpu"] = "Error detecting GPU"
+            info["gpu_mem_gb"] = "Error"
+
+        print(f"[HolafBenchmarkRunner] System Info: OS={info['os']}, CPU={info['cpu']}, RAM={info['ram_gb']}GB, GPU={info['gpu']} ({info['gpu_mem_gb']}GB)")
+        return info
+
+
+# Node class mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
     "HolafBenchmarkRunner": HolafBenchmarkRunner
 }

@@ -23,15 +23,20 @@ from PIL import Image, ImageOps
 #    - X-axis: Resolution (extracted from the 'Resolution' column, e.g., width from 'WxH').
 #    - Y-axis: Pixels/s (from the 'Pixels/s' column).
 # 4. Adds a title and axis labels to the plot.
-# 5. Converts the generated plot into an image format compatible with ComfyUI (Torch tensor).
-# 6. Outputs the plot as an IMAGE type.
+# 5. Extracts system and model information (if present) from the CSV data.
+# 6. Groups data by model name if multiple models are present in the CSV.
+# 7. Plots separate curves for each model on the same axes.
+# 8. Adds a legend to identify the curves.
+# 9. Extracts system information (if present) and adds it as text to the side of the plot.
+# 10. Converts the generated plot into an image format compatible with ComfyUI (Torch tensor).
+# 11. Outputs the plot as an IMAGE type.
 #
 # Inputs:
 # - report_text (STRING): The benchmark report data formatted as a CSV string.
 # - plot_title (STRING): Optional title for the generated plot.
 #
 # Outputs:
-# - plot_image (IMAGE): The generated plot as a ComfyUI image tensor.
+# - plot_image (IMAGE): The generated plot, including system/model info text, as a ComfyUI image tensor.
 #
 # Dependencies:
 # - Requires external Python libraries: pandas and matplotlib.
@@ -125,10 +130,16 @@ class HolafBenchmarkPlotter:
             csv_io.close() # Close the StringIO object
 
             # --- Data Validation and Preparation ---
-            required_columns = ["Resolution", "Pixels/s"]
-            if not all(col in df.columns for col in required_columns):
-                print(f"[HolafBenchmarkPlotter] Error: CSV missing required columns ({required_columns}). Found: {list(df.columns)}")
+            # Base required columns for the plot itself
+            required_plot_columns = ["Resolution", "Pixels/s"]
+            if not all(col in df.columns for col in required_plot_columns):
+                print(f"[HolafBenchmarkPlotter] Error: CSV missing required plot columns ({required_plot_columns}). Found: {list(df.columns)}")
                 return (torch.zeros([1, 64, 64, 3], dtype=torch.float32),)
+
+            # Optional columns for system info text (Model Name/Family handled by legend)
+            system_info_columns = ["CPU", "RAM (GB)", "GPU", "GPU Memory (GB)", "OS"]
+            # Extract system info from the first row (should be consistent)
+            found_system_info = {col: df.iloc[0][col] for col in system_info_columns if col in df.columns and not pd.isna(df.iloc[0][col])}
 
             # Extract resolution (assuming format 'WxH', take W) and convert Pixels/s
             try:
@@ -150,9 +161,21 @@ class HolafBenchmarkPlotter:
             df = df.sort_values(by='ResValue')
 
             # --- Plotting ---
-            fig, ax = plt.subplots(figsize=(10, 6)) # Adjust figure size as needed
+            fig, ax = plt.subplots(figsize=(12, 6)) # Adjust figure size for potential side text
 
-            ax.plot(df['ResValue'], df['PixelsPerSec'], marker='o', linestyle='-')
+            # Group data by model name and plot each group
+            if 'Model Name' in df.columns:
+                grouped = df.groupby('Model Name')
+                for name, group in grouped:
+                    group = group.sort_values(by='ResValue') # Ensure each group is sorted
+                    ax.plot(group['ResValue'], group['PixelsPerSec'], marker='o', linestyle='-', label=name)
+                ax.legend(loc='lower left', fontsize='small') # Add legend
+            else:
+                # Fallback if no Model Name column (shouldn't happen with new Runner)
+                df = df.sort_values(by='ResValue')
+                ax.plot(df['ResValue'], df['PixelsPerSec'], marker='o', linestyle='-')
+                print("[HolafBenchmarkPlotter] Warning: 'Model Name' column not found in CSV data. Plotting single curve without legend.")
+
 
             # Add labels and title
             ax.set_xlabel("Resolution (Width in Pixels)")
@@ -160,8 +183,24 @@ class HolafBenchmarkPlotter:
             ax.set_title(plot_title)
             ax.grid(True, which='both', linestyle='--', linewidth=0.5)
 
-            # Improve layout
-            fig.tight_layout()
+            # --- Add System Info Text to the Right ---
+            if found_system_info:
+                info_lines = ["System Info:"]
+                if "GPU" in found_system_info: info_lines.append(f"GPU: {found_system_info['GPU']} ({found_system_info.get('GPU Memory (GB)', 'N/A')} GB)")
+                if "CPU" in found_system_info: info_lines.append(f"CPU: {found_system_info['CPU']}")
+                if "RAM (GB)" in found_system_info: info_lines.append(f"RAM: {found_system_info['RAM (GB)']} GB")
+                if "OS" in found_system_info: info_lines.append(f"OS: {found_system_info['OS']}")
+
+                info_text = "\n".join(info_lines)
+                # Place text below the plot area, centered horizontally
+                plt.figtext(0.5, 0.01, info_text, ha="center", va="bottom", fontsize=8, wrap=True,
+                            bbox=dict(boxstyle='round,pad=0.3', fc='lightgray', alpha=0.7)) # Keep the bbox
+                # Adjust subplot parameters to make room for the text at the bottom
+                plt.subplots_adjust(bottom=0.25) # Adjust bottom margin
+            else:
+                 # Improve layout even if no extra text (no specific adjustment needed here if text is absent)
+                 fig.tight_layout()
+
 
             # Convert plot to tensor
             plot_tensor = self.plot_to_tensor(fig)
