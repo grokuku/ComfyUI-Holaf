@@ -1,3 +1,44 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This file defines the 'HolafTileCalculator' custom node for ComfyUI.
+# Its primary function is to calculate optimal tiling parameters for processing
+# a large image (defined by 'Width' and 'Height') in smaller chunks (tiles).
+# Given a 'Max_Tile_Size' constraint and a desired 'Overlap' between tiles,
+# it determines the total number of tiles needed and the precise 'Tile Width'
+# and 'Tile Height' required to perfectly cover the original image dimensions
+# while respecting the overlap.
+#
+# Design Choices & Rationale:
+# - Focus on Precise Tile Dimensions: Unlike a node that might just output
+#   slice counts, this node calculates the *exact* tile dimensions needed for
+#   a seamless reconstruction when using the specified overlap.
+# - Input Parameters: Takes image dimensions, maximum tile size, and overlap
+#   pixels as input.
+# - Calculation Logic:
+#   1. Determines the initial number of slices needed horizontally (`x_slices`)
+#      and vertically (`y_slices`) based on the `Max_Tile_Size` and `Overlap`.
+#      Handles edge cases where overlap is too large or the image fits in one tile.
+#   2. Calculates the total number of tiles (`nb_tiles = x_slices * y_slices`).
+#   3. Calculates the *final* required tile dimensions (`final_tile_w`, `final_tile_h`)
+#      using the formula `D = ceil((A + (N - 1) * C) / N)`, where D is the final
+#      tile dimension, A is the total image dimension, N is the number of slices
+#      in that dimension, and C is the overlap. Using `math.ceil` ensures each
+#      tile is large enough to cover its portion plus the necessary overlap for
+#      a perfect fit across the entire image.
+#   4. Calculates the effective overlap percentage based on these final, calculated
+#      tile dimensions for inclusion in the summary.
+# - Outputs: Provides the total number of tiles (`Nb Tiles`), the calculated
+#   `Tile Width`, the calculated `Tile Height`, and a concise `Summary` string
+#   (e.g., "2x3 (6) 704x704px Ovlp:12.8%").
+# - Relationship to Slice Calculator: This node shares core calculation logic with
+#   `holaf_slice_calculator.py` but differs in its primary outputs, focusing on
+#   the total tile count and the calculated tile dimensions needed for processing,
+#   rather than just the slice counts per axis.
+# === End Documentation ===
+
 import math
 
 class HolafTileCalculator:

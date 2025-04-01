@@ -1,3 +1,48 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This file defines the 'HolafTiledKSampler' custom node for ComfyUI.
+# It implements a KSampler that processes large images or latents by dividing
+# them into smaller, overlapping tiles. This allows generating high-resolution
+# images that might otherwise exceed available GPU memory limits. The node
+# samples each tile individually and then blends them back together.
+#
+# Design Choices & Rationale:
+# - Tiling Strategy: Addresses memory limitations by breaking the sampling
+#   process into manageable chunks (tiles) based on `max_tile_size`.
+# - Overlap & Blending: Uses a specified `overlap_size` between tiles. A linear
+#   feathering mask (`tile_feather_mask`) is generated based on this overlap.
+#   During recombination, the output of each tile is multiplied by this mask,
+#   and the results are accumulated. A corresponding `blend_mask` tracks the
+#   sum of feather mask contributions. The final latent is obtained by dividing
+#   the accumulated output by the blend mask, effectively averaging the results
+#   in the overlapping regions for a smoother transition.
+# - Tile Parameter Calculation: Includes an internal `calculate_tile_params` method
+#   (similar logic to `HolafTileCalculator`) to determine the number of slices
+#   and the precise tile dimensions (in pixels and latent space). It ensures
+#   tile dimensions and overlap are divisible by 8 (important for latent space
+#   operations) and recalculates slice counts if adjustments are needed.
+# - Device Management: Manages tensor placement. Input latent and noise are moved
+#   to the model's device. The `prepare_cond_for_tile` helper is used within the
+#   loop to create deep copies of conditioning and move tensors to the device
+#   *for each tile's sampling call*. The final blended latent and decoded image
+#   are moved to an intermediate device.
+# - Model Cloning: The diffusion model (`model`) is cloned *once* before the
+#   tiling loop starts. This ensures that the same model state (apart from
+#   internal sampler state changes) is used for all tiles, promoting consistency.
+# - Core Sampler Integration: Leverages the standard `comfy.sample.sample`
+#   function to perform the actual diffusion process for each individual tile.
+# - Conditioning Handling: Applies the *full* positive and negative conditioning
+#   context to the sampling of each tile. An option for sliced conditioning
+#   appears to have been removed.
+# - Input Flexibility: Accepts either a 'latent' or an 'image' as input, encoding
+#   the image using the provided VAE if necessary.
+# - Seed Handling: Currently uses the main input `seed` for all tiles. Logic for
+#   incrementing or randomizing seeds per tile seems to have been removed.
+# === End Documentation ===
+
 import torch
 import math
 import numpy as np

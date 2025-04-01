@@ -1,3 +1,41 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This file defines the 'HolafSaveImage' custom node for ComfyUI.
+# Its primary function is to save generated images to disk, along with optional
+# associated metadata: the text prompt in a `.txt` file and the workflow
+# structure in a `.json` file. It provides enhanced control over the output
+# directory structure and filenames compared to the standard save node.
+#
+# Design Choices & Rationale:
+# - Flexible Path/Filename Formatting: Uses Python's `strftime` formatting codes
+#   for both the `subfolder` and `filename` inputs. This allows users to
+#   automatically organize outputs by date, time, or other temporal components
+#   (e.g., creating daily folders like "2025-04-01").
+# - Separate Metadata Files: Instead of embedding prompt/workflow data into the
+#   PNG metadata (which can have limitations or be stripped), this node saves
+#   them as separate `.txt` (prompt) and `.json` (workflow) files alongside the
+#   image. This keeps the image file clean and makes metadata easily accessible
+#   for external tools or scripts.
+# - Filename Collision Handling: Implements a `get_unique_filepath` helper function
+#   to automatically append a numeric suffix (e.g., "_0001", "_0002") if a file
+#   with the target name already exists. This prevents accidental overwriting of files.
+#   The unique base name is then consistently used for the image, prompt, and workflow files.
+# - Directory Management: Creates the specified output directory (`base_path`/`subfolder`)
+#   if it doesn't exist, including error handling and a fallback to the default
+#   ComfyUI output directory if creation fails.
+# - User Control: Provides boolean toggles (`save_prompt`, `save_workflow`) to
+#   allow users to decide whether to save the associated metadata files.
+# - Batch Handling: Correctly processes batches of images, saving each image
+#   individually and ensuring unique filenames (and corresponding metadata filenames)
+#   are generated for each image within the batch if necessary.
+# - Passthrough & Help Outputs: Passes the input image and prompt through as outputs
+#   for potential chaining. Also outputs the workflow JSON as a string and provides
+#   a detailed `help_string` output for in-UI guidance.
+# === End Documentation ===
+
 import os
 import json
 import datetime

@@ -1,3 +1,38 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This __init__.py file serves as the main entry point for the 'ComfyUI-Holaf'
+# custom node package. It is responsible for making the custom nodes defined
+# within this package discoverable and usable by the ComfyUI application.
+#
+# Design Choices & Rationale:
+# - Centralized Registration: Follows the standard ComfyUI pattern for custom
+#   node packages. ComfyUI looks for this file to understand what nodes the
+#   package provides.
+# - Modular Imports: Imports individual node classes (e.g., HolafTileCalculator,
+#   HolafSaveImage) from their respective files within the `./nodes/` subdirectory.
+#   This keeps the node implementations organized in separate files.
+# - NODE_CLASS_MAPPINGS: This dictionary is crucial for ComfyUI. It maps a unique
+#   internal string identifier (typically the class name) for each node to the
+#   actual Python class that implements the node's logic. ComfyUI uses this map
+#   to instantiate the correct node object when loading or running a workflow.
+# - NODE_DISPLAY_NAME_MAPPINGS: This dictionary maps the same internal string
+#   identifiers to user-friendly names that appear in the ComfyUI "Add Node" menu.
+#   This allows for more readable or descriptive names than the raw class names.
+# - WEB_DIRECTORY: Specifies the relative path to the directory containing
+#   associated web assets (JavaScript files in this case) needed for the frontend
+#   components of certain custom nodes (like HolafImageComparer). ComfyUI serves
+#   files from this directory.
+# - __all__ Export: Explicitly lists the mapping dictionaries (`NODE_CLASS_MAPPINGS`,
+#   `NODE_DISPLAY_NAME_MAPPINGS`) to be exported when the package is imported.
+#   This is standard Python practice and ensures ComfyUI can access these essential variables.
+# - Initialization Feedback: Includes a print statement to the console upon successful
+#   loading, providing visual confirmation that the custom node package has been
+#   recognized and initialized by ComfyUI.
+# === End Documentation ===
+
 # Import classes from the nodes directory
 # Removed import for HolafHello
 from .nodes.holaf_neurogrid_overload import HolafNeurogridOverload
@@ -10,6 +45,7 @@ from .nodes.holaf_image_comparer import HolafImageComparer # Updated import path
 from .nodes.holaf_upscale_image import UpscaleImageHolaf # Added import for Upscale node
 from .nodes.holaf_overlay import HolafOverlayNode # Added import for Overlay node
 from .nodes.holaf_resolution_preset import HolafResolutionPreset # Added import for Resolution Preset node
+# Removed import for HolafToText
 # Removed import for HolafImageCompare
 # Removed import for HolafAnyToText
 
@@ -26,6 +62,7 @@ NODE_CLASS_MAPPINGS = {
     "UpscaleImageHolaf": UpscaleImageHolaf, # Added mapping for Upscale node
     "HolafOverlayNode": HolafOverlayNode, # Added mapping for Overlay node
     "HolafResolutionPreset": HolafResolutionPreset, # Added mapping for Resolution Preset node
+    # Removed mapping for HolafToText
     # Removed mapping for HolafImageCompare
     # Removed mapping for HolafAnyToText
 }
@@ -43,6 +80,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UpscaleImageHolaf": "Upscale (Holaf)", # Added display name for Upscale node
     "HolafOverlayNode": "Overlay (Holaf)", # Added display name for Overlay node
     "HolafResolutionPreset": "Resolution Preset (Holaf)", # Added display name for Resolution Preset node
+    # Removed display name for HolafToText
     # Removed display name for HolafImageCompare
     # Removed display name for HolafAnyToText
 }

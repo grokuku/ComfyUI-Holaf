@@ -1,3 +1,33 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This file defines the 'HolafImageComparer' custom node for ComfyUI.
+# Its primary function is to provide a user interface element that allows
+# for the side-by-side comparison of two sets of images (image_a and image_b).
+#
+# Design Choices & Rationale:
+# - Inheritance: Inherits from the standard ComfyUI 'PreviewImage' node.
+#   This leverages the existing image saving and preview infrastructure,
+#   reducing code duplication and ensuring compatibility with ComfyUI's
+#   image handling mechanisms.
+# - Inputs: Takes two optional 'IMAGE' inputs ('image_a', 'image_b').
+#   Making them optional allows the node to function even if only one
+#   or neither input is connected, providing flexibility in workflow design.
+# - Processing: The 'compare_images' method utilizes the inherited 'save_images'
+#   function. It saves each input image set separately, likely using distinct
+#   filename prefixes ("a_", "b_") to differentiate them in the output directory.
+# - Output: Returns a dictionary structured specifically for the UI ({'ui': {'a_images': [...], 'b_images': [...]}}).
+#   This structure is designed to be consumed by a corresponding JavaScript
+#   frontend component (likely 'js/holaf_image_comparer.js') which renders
+#   the two image sets for comparison.
+# - Helpers: Includes utility functions for naming (`get_name`), categorization (`get_category`),
+#   and colored logging (`log`) for potential debugging and organization, although
+#   `get_name` is bypassed for the main class name.
+# - Namespace: Uses a 'holaf' namespace for organization within ComfyUI.
+# === End Documentation ===
+
 # Combined Python code for holaf-comfy nodes
 
 from nodes import PreviewImage

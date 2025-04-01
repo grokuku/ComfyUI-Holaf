@@ -1,3 +1,46 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This file defines the 'UpscaleImageHolaf' custom node for ComfyUI.
+# It provides functionality to upscale an input image using a specified
+# upscaling model (e.g., ESRGAN, SwinIR) loaded via Spandrel, targeting a
+# final resolution defined by a desired megapixel count.
+#
+# Design Choices & Rationale:
+# - Megapixel Targeting: Instead of a fixed scale factor, the user specifies
+#   the desired output resolution in megapixels. The node calculates the
+#   required target width and height to achieve this while preserving the
+#   original aspect ratio.
+# - Spandrel Model Loading: Leverages the `spandrel` library (via `ModelLoader`
+#   and `comfy.utils.load_torch_file`) for loading various upscale model
+#   architectures from state dictionaries found in the `upscale_models` folder.
+#   This provides compatibility with many common upscaler types.
+# - Tiled Upscaling (`comfy.utils.tiled_scale`): Utilizes ComfyUI's built-in
+#   `tiled_scale` utility function. This function automatically handles breaking
+#   the image into tiles if necessary (based on default tile size/overlap or
+#   potential future configuration), processing each tile with the model, and
+#   stitching the results back together. This is crucial for handling large
+#   images that might exceed GPU memory if processed whole.
+# - Two-Stage Scaling (Model Scale + Resampling):
+#   1. Model Upscaling: The image is first upscaled using the selected model's
+#      native scale factor within `tiled_scale`.
+#   2. Resampling (if needed): After the model upscale, the node checks if the
+#      resulting image dimensions match the target dimensions calculated from the
+#      `megapixels` input. If they differ, it performs a second scaling step
+#      using a standard resampling algorithm (selected via `upscale_method`, e.g.,
+#      'lanczos', 'bicubic') to resize the image precisely to the target dimensions.
+#      This ensures the final output matches the desired megapixel count, even if
+#      the model's scale factor doesn't align perfectly.
+# - Device Management: Relies on `comfy.model_management` and `comfy.utils.tiled_scale`
+#   to handle device placement (moving model and data to GPU for processing,
+#   results back to CPU).
+# - Error Handling: Includes checks for missing model files and catches potential
+#   errors during model loading and the upscaling process.
+# - Output: Returns the final upscaled image and the name of the model used as a string.
+# === End Documentation ===
+
 import torch
 import folder_paths
 import comfy.model_management

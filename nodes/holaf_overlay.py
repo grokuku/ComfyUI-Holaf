@@ -1,3 +1,48 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This file defines the 'HolafOverlayNode' custom node for ComfyUI.
+# It overlays an 'overlay_image' onto a 'background_image' with controls for
+# size, position, opacity, and masking.
+#
+# Design Choices & Rationale:
+# - Image Library: Uses the Python Imaging Library (PIL) for core image
+#   manipulation tasks like resizing and compositing (pasting with a mask).
+#   This provides access to robust image processing functions.
+# - Tensor Conversion: Includes helper functions (`tensor_to_pil`, `pil_to_tensor`)
+#   to reliably convert between PyTorch tensors (ComfyUI's standard format) and
+#   PIL Images, handling different channel orders (CHW/HWC), data types,
+#   and batch dimensions (BCHW).
+# - Batch Processing: Correctly handles batches of images. If background and
+#   overlay batch sizes differ, it attempts to broadcast the single-item batch
+#   or uses the minimum batch size if both are multi-item.
+# - Sizing: The overlay's size is determined by 'size_percent' relative to the
+#   *largest* dimension of the background image, maintaining the overlay's
+#   original aspect ratio. The size is clamped to not exceed background dimensions.
+# - Positioning: The overlay's position is calculated based on 'horizontal_align',
+#   'vertical_align', and 'offset_percent'. The offset (margin) is calculated
+#   relative to the *smallest* dimension of the background image. Position is
+#   clamped to keep the overlay within the background bounds.
+# - Masking & Opacity:
+#   - Mask Priority: Uses an optional input 'mask' if provided. If not, it attempts
+#     to derive a mask from the 'overlay_image's alpha channel. If neither is
+#     available, it assumes a fully opaque overlay.
+#   - **Mask Inversion**: Critically, if a mask is provided via the 'mask' input OR
+#     derived from the overlay's alpha channel, it is *inverted* before use.
+#     This means the black areas of the input mask/alpha define where the overlay
+#     is applied, and white areas are transparent. An overlay with no alpha and
+#     no input mask results in a fully opaque (non-inverted) mask.
+#   - Opacity Application: The 'opacity' percentage is applied to the final mask
+#     (after potential inversion and resizing) before pasting.
+# - Compositing: Pastes the (potentially resized) RGB content of the overlay onto
+#   an RGBA version of the background, using the final calculated mask (which
+#   includes opacity adjustments) to control transparency.
+# - Output Format: The final combined image is returned as a standard ComfyUI
+#   IMAGE tensor (BHWC format).
+# === End Documentation ===
+
 import torch
 import numpy as np
 from PIL import Image, ImageOps

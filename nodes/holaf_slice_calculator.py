@@ -1,3 +1,45 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This file defines the 'HolafSliceCalculator' custom node for ComfyUI.
+# Its primary function is to determine the number of slices (tiles) required
+# horizontally (X Slices) and vertically (Y Slices) to cover an image of
+# given 'Width' and 'Height', based on a 'Max_Tile_Size' constraint and
+# a specified 'Overlap' between slices. It also calculates the effective
+# overlap percentage and provides a summary string.
+#
+# Design Choices & Rationale:
+# - Focus on Slice Count & Percentage: Unlike a node that might output exact
+#   tile dimensions, this node focuses on providing the *number* of slices
+#   needed and the *percentage* of overlap relative to the calculated tile size.
+#   This can be useful for configuring subsequent tiling processes or for display.
+# - Input Parameters: Takes image dimensions, maximum tile size, and overlap
+#   pixels as input, similar to potential tile dimension calculation nodes.
+# - Slice Calculation Logic:
+#   1. Determines initial tile dimensions based on max size and image dimensions.
+#   2. Calculates the step size (tile dimension - overlap).
+#   3. Handles edge cases: If overlap is too large (step <= 0) or the image
+#      dimension fits within a single max-sized tile, it correctly calculates 1 slice.
+#   4. Uses `math.ceil` to determine the number of slices needed to cover the
+#      dimension beyond the first tile.
+# - Overlap Percentage Calculation:
+#   - It first calculates *ideal* tile dimensions (`final_tile_w`, `final_tile_h`)
+#     that would perfectly fit the image dimensions given the calculated number
+#     of slices and the overlap. This step seems aimed at achieving a more
+#     accurate representation of the overlap in the final configuration, even
+#     though these final tile dimensions are not outputted directly by this node.
+#   - The final 'Overlap Percent' output is calculated based on the specified
+#     'Overlap' value relative to the *smaller* dimension of these *ideal*
+#     (recalculated) tile sizes.
+# - Summary Output: Provides a concise string summarizing the results:
+#   "Xslices x Yslices (TotalTiles) FinalTileW x FinalTileH px Ovlp:Percent%".
+# - Relationship to Tile Calculator: This node shares calculation logic with
+#   `holaf_tile_calculator.py` but differs in its primary outputs, focusing on
+#   counts and percentages rather than pixel dimensions.
+# === End Documentation ===
+
 import math
 
 class HolafSliceCalculator: # Renamed class

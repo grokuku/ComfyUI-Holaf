@@ -1,3 +1,47 @@
+# === Documentation ===
+# Author: Cline (AI Assistant)
+# Date: 2025-04-01
+#
+# Purpose:
+# This file defines the 'HolafKSampler' custom node for ComfyUI. It acts as a
+# wrapper around the core ComfyUI sampling functionality (`comfy.sample.sample`),
+# providing flexibility in input type (latent or image) and handling device
+# placement for inputs and outputs. It appears to be a simplified version,
+# potentially refactored from an earlier iteration that included tiling capabilities.
+#
+# Design Choices & Rationale:
+# - Input Flexibility: Accepts either a 'latent' or an 'image' as the starting point,
+#   controlled by the 'input_type' parameter. If an image is provided, it's
+#   encoded using the provided VAE. This increases the node's versatility.
+# - Device Management: Explicitly manages the device placement of tensors.
+#   Input latent, noise, and conditioning are moved to the model's execution
+#   device before sampling. Final latent and image outputs are moved to an
+#   intermediate device (typically CPU) afterwards. This ensures compatibility
+#   across different hardware configurations (CPU/GPU).
+# - Conditioning Preparation (`prepare_cond_for_tile`): A helper function creates
+#   deep copies of the positive and negative conditioning lists and moves the
+#   tensors within these copies to the target device. Deep copying prevents
+#   unintended modifications to the original conditioning data passed into the node.
+# - Model Cloning: The input 'model' (ModelPatcher) is cloned before sampling.
+#   This is standard practice in ComfyUI samplers to isolate the sampling
+#   process and prevent state conflicts if the same model is used elsewhere
+#   in the workflow concurrently.
+# - Core Sampler Integration: Leverages the built-in `comfy.sample.sample`
+#   function for the actual diffusion sampling process, ensuring consistency
+#   with ComfyUI's standard samplers and schedulers.
+# - Simplified Preview Callback: The progress callback (`preview_callback`) is
+#   implemented but currently only updates a progress bar (`comfy.utils.ProgressBar`).
+#   Image preview generation within the callback seems to have been removed,
+#   possibly for performance reasons or because previews are handled differently
+#   in the intended workflows for this node.
+# - Passthrough Outputs: Returns the original model, conditioning, and VAE inputs
+#   alongside the generated latent and image, facilitating chaining with subsequent nodes.
+# - Refactoring Evidence: Comments and the structure (e.g., `prepare_cond_for_tile`
+#   name despite no explicit tiling in this class, removed tiling parameters)
+#   suggest this node might be a result of refactoring, potentially simplifying
+#   a more complex tiled sampler or serving as a base class.
+# === End Documentation ===
+
 import torch
 import math
 import numpy as np

@@ -1,3 +1,65 @@
+/* === Documentation ===
+ * Author: Cline (AI Assistant) / Adapted from multiple sources
+ * Date: 2025-04-01
+ *
+ * Purpose:
+ * This JavaScript file defines the frontend behavior and user interface for the
+ * 'HolafImageComparer' custom node in ComfyUI. It allows users to visually
+ * compare two sets of images (typically labeled 'A' and 'B') side-by-side
+ * directly within the node interface.
+ *
+ * Key Components:
+ * - HolafImageComparerWidget: A custom LiteGraph widget responsible for drawing
+ *   the image comparison interface. It handles loading images from URLs provided
+ *   by the backend, displaying them, managing selection state (if more than two
+ *   images are provided), and rendering the comparison view (either sliding
+ *   or clicking to toggle).
+ * - HolafImageComparer (Node Class): Extends a base node class (`HolafBaseServerNode`,
+ *   which itself seems derived from `LGraphNode`) to represent the node in the
+ *   ComfyUI graph. It manages the `HolafImageComparerWidget`, handles mouse
+ *   interactions (enter, leave, move, down) to implement the 'Slide' or 'Click'
+ *   comparison modes, processes results from the backend (`onExecuted`) to update
+ *   the widget's image data, and handles serialization.
+ * - Base Classes & Utilities: Includes base classes (`HolafBaseWidget`, `HolafBaseNode`,
+ *   `HolafBaseServerNode`) and utility functions (logging, canvas drawing, property
+ *   definition) that appear adapted from shared utilities, possibly from another
+ *   custom node suite (like rgthree), providing foundational structure.
+ * - Extension Registration: Uses `app.registerExtension` and overrides
+ *   `LiteGraph.registerNodeType` to integrate the custom node logic and replace
+ *   the default server node implementation when ComfyUI loads the corresponding
+ *   Python node type.
+ *
+ * Design Choices & Rationale:
+ * - Custom Widget: A dedicated widget (`HolafImageComparerWidget`) is necessary
+ *   to create the specialized UI for displaying and interacting with two images.
+ * - Image Handling: The widget receives image data (filenames, types, subfolders)
+ *   from the backend via the `onExecuted` method of the node. It constructs
+ *   image URLs using the ComfyUI API (`api.apiURL('/view?filename=...')`) and
+ *   loads them into `Image` objects for display.
+ * - Interaction Modes: Supports two modes for comparison, controlled by the
+ *   node's "comparer_mode" property:
+ *     - 'Slide': Hovering the mouse over the widget reveals the second image
+ *       up to the mouse cursor's X position.
+ *     - 'Click': Clicking and holding reveals the second image; otherwise, the
+ *       first image is shown.
+ * - Selection UI (for >2 images): If more than two images (e.g., A1, A2, B1, B2)
+ *   are provided by the backend, the widget displays clickable text labels
+ *   (A1, A2, B1, B2) above the image area, allowing the user to select which
+ *   specific 'A' image and 'B' image are currently being compared.
+ * - Backend Communication: Relies on the standard ComfyUI execution flow. The
+ *   backend Python node (`nodes/holaf_image_comparer.py`) processes inputs,
+ *   saves images, and returns the necessary data (`a_images`, `b_images`) in the
+ *   execution results, which the frontend node's `onExecuted` method then uses
+ *   to update the widget.
+ * - Modularity & Overriding: Uses ComfyUI's extension system and node registration
+ *   overrides to cleanly integrate the custom frontend behavior without modifying
+ *   core ComfyUI code directly.
+ *
+ * Dependencies:
+ * - ComfyUI core scripts: `app.js`, `api.js`, `widgets.js`.
+ * - LiteGraph library (bundled with ComfyUI).
+ * === End Documentation ===
+ */
 // Combined JavaScript for holaf-comfy
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";

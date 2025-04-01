@@ -1,3 +1,73 @@
+/* === Documentation ===
+ * Author: Cline (AI Assistant) / Unknown (Game Logic)
+ * Date: 2025-04-01
+ *
+ * Purpose:
+ * This JavaScript file implements a complete, playable Tetris-like game, named
+ * "Neurogrid Overload", directly within the frontend canvas of the
+ * 'HolafNeurogridOverload' custom node in ComfyUI. Despite the associated Python
+ * node being extremely simple (just printing "haha"), this frontend code contains
+ * the full logic and rendering for the game.
+ *
+ * Key Components:
+ * - Game Constants: Defines grid dimensions (COLS, ROWS), block size, colors,
+ *   piece shapes (PIECES), timing intervals, etc.
+ * - Game State Management: Uses variables like `board`, `player` (current piece),
+ *   `nextPiece`, `score`, `level`, `lines`, and `gameState` ('TITLE', 'PLAYING',
+ *   'PAUSED', 'GAME_OVER') to track the game's status.
+ * - Core Game Logic: Includes functions for:
+ *   - Board creation (`createBoard`).
+ *   - Piece creation, including random bomb placement (`createPieceMatrix`).
+ *   - Player piece reset and game over check (`playerReset`).
+ *   - Collision detection (`checkBoardCollision`).
+ *   - Merging landed pieces onto the board (`merge`).
+ *   - Piece rotation with wall kick logic (`playerRotate`).
+ *   - Player movement (`playerMove`).
+ *   - Soft drop (`playerDrop`) and hard drop (`playerHardDrop`).
+ *   - Lock delay mechanism (`isLanded`, `lockDelayTimer`).
+ *   - Line clearing, scoring, leveling (`sweepAndExplode`).
+ *   - Bomb explosion logic (`triggerExplosion`).
+ * - Rendering: Contains functions to draw all visual elements onto the node's canvas:
+ *   - Individual blocks with gradients/borders (`drawBlock`).
+ *   - Background grid (`drawBoardGrid`).
+ *   - Static board state (`drawBoardState`).
+ *   - Ghost piece preview (`drawGhostPiece`, `calculateGhostPosition`).
+ *   - Active player piece (`drawPlayerPiece`).
+ *   - UI panel (score, level, lines, next piece) (`drawUI`).
+ *   - Overlays for Title, Pause, and Game Over screens.
+ *   - Particle effects for bomb explosions (`createExplosionEffect`, `updateAndDrawParticles`).
+ * - Game Loop: Uses `requestAnimationFrame` (`update` function) to drive game logic
+ *   (dropping pieces, checking lock delay) and rendering updates.
+ * - Input Handling: Attaches a `keydown` event listener to the document (capture phase)
+ *   to handle game controls (arrows, space, P, Q, R, Enter).
+ * - ComfyUI Integration:
+ *   - Uses `app.registerExtension` to hook into the node creation process.
+ *   - Overrides `onDrawBackground` for the specific node type to call the main `drawGame` function.
+ *   - Overrides `onRemoved` to clean up the event listener and stop the game loop.
+ *   - Sets a fixed size for the node and disables resizing.
+ *
+ * Design Choices & Rationale:
+ * - Self-Contained Game: The entire game logic and rendering are implemented
+ *   within this single JS file, making the node a standalone mini-application.
+ * - Canvas Rendering: Uses the HTML5 Canvas API directly for all graphics.
+ * - Standard Tetris Mechanics: Implements common features like lock delay,
+ *   wall kicks, ghost piece, scoring based on lines cleared, and increasing difficulty (level).
+ * - Bomb Mechanic: Adds a twist with randomly appearing bombs that explode and
+ *   clear surrounding blocks when part of a cleared line.
+ * - Event Listener Scope: Attaches the keyboard listener to the `document` with
+ *   `useCapture: true`. This ensures it captures key presses even if other UI
+ *   elements might try to handle them, but requires careful `stopPropagation`
+ *   to avoid interfering with ComfyUI's normal operation. It only processes
+ *   keys when the node is not collapsed.
+ * - Unexpected Functionality: The presence of a full game is highly unusual for
+ *   a node whose backend counterpart does nothing significant. This might be an
+ *   Easter egg, a debugging tool left in, or a repurposed node.
+ *
+ * Dependencies:
+ * - ComfyUI core script: `app.js`.
+ * - LiteGraph library (bundled with ComfyUI).
+ * === End Documentation ===
+ */
 import { app } from "../../../scripts/app.js";
 
 // --- Constants ---
