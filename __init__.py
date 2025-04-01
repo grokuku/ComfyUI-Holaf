@@ -45,6 +45,8 @@ from .nodes.holaf_image_comparer import HolafImageComparer # Updated import path
 from .nodes.holaf_upscale_image import UpscaleImageHolaf # Added import for Upscale node
 from .nodes.holaf_overlay import HolafOverlayNode # Added import for Overlay node
 from .nodes.holaf_resolution_preset import HolafResolutionPreset # Added import for Resolution Preset node
+from .nodes.HolafBenchmarkRunner import HolafBenchmarkRunner # Added import for Benchmark Runner node
+from .nodes.HolafBenchmarkPlotter import HolafBenchmarkPlotter # Added import for Benchmark Plotter node
 # Removed import for HolafToText
 # Removed import for HolafImageCompare
 # Removed import for HolafAnyToText
@@ -62,6 +64,8 @@ NODE_CLASS_MAPPINGS = {
     "UpscaleImageHolaf": UpscaleImageHolaf, # Added mapping for Upscale node
     "HolafOverlayNode": HolafOverlayNode, # Added mapping for Overlay node
     "HolafResolutionPreset": HolafResolutionPreset, # Added mapping for Resolution Preset node
+    "HolafBenchmarkRunner": HolafBenchmarkRunner, # Added mapping for Benchmark Runner node
+    "HolafBenchmarkPlotter": HolafBenchmarkPlotter, # Added mapping for Benchmark Plotter node
     # Removed mapping for HolafToText
     # Removed mapping for HolafImageCompare
     # Removed mapping for HolafAnyToText
@@ -80,6 +84,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UpscaleImageHolaf": "Upscale (Holaf)", # Added display name for Upscale node
     "HolafOverlayNode": "Overlay (Holaf)", # Added display name for Overlay node
     "HolafResolutionPreset": "Resolution Preset (Holaf)", # Added display name for Resolution Preset node
+    "HolafBenchmarkRunner": "Benchmark Runner (Holaf)", # Added display name for Benchmark Runner node
+    "HolafBenchmarkPlotter": "Benchmark Plotter (Holaf)", # Added display name for Benchmark Plotter node
     # Removed display name for HolafToText
     # Removed display name for HolafImageCompare
     # Removed display name for HolafAnyToText
