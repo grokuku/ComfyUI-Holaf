@@ -26,7 +26,7 @@ from PIL import Image, ImageOps
 #    - Y-axis: Pixels/s (from the 'Pixels/s' column).
 # 4. Adds a title and axis labels to both plots.
 # 5. Extracts system and model information (if present) from the CSV data.
-# 6. Groups data by model name if multiple models are present in the CSV.
+# 6. Groups data by model name (`Model Name` column) if multiple models are present in the CSV.
 # 7. Plots separate curves for each model on the same axes for both plots.
 # 8. Adds a legend to identify the curves on both plots.
 # 9. Extracts system information (if present) and adds it as text below each plot, styled appropriately for the theme.
@@ -35,6 +35,7 @@ from PIL import Image, ImageOps
 #
 # Inputs:
 # - report_text (STRING): The benchmark report data formatted as a CSV string.
+#   (Expected columns include: Resolution, Pixels/s, Model Name, Model Type, CPU, RAM (GB), GPU, GPU Memory (GB), OS)
 # - plot_title (STRING): Optional title for the generated plots.
 #
 # Outputs:

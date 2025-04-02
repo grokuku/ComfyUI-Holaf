@@ -8,54 +8,63 @@ import os
 # ==================================================================================
 #
 # Author: Cline (AI Assistant) for Holaf
-# Date: 2025-04-01
+# Date: 2025-04-02 (Updated)
 #
 # Purpose:
-# This node loads a specified checkpoint model and outputs both the loaded model object
-# and the filename of the checkpoint. It's designed to be used in conjunction with
-# HolafBenchmarkRunner to provide it with the necessary model and its name.
+# This node loads specified SD checkpoint models and/or FLUX UNet models.
+# It outputs a list containing information about each loaded model (object, name, type)
+# for use with HolafBenchmarkRunner.
 #
 # How it works:
-# 1. Provides a dropdown list (`ckpt_name`) of available checkpoint files.
-# 2. When executed, it loads the selected checkpoint using ComfyUI's standard
-#    loading functions (`comfy.sd.load_checkpoint_guess_config`).
-# 3. Outputs the loaded model object (`MODEL`) and the selected checkpoint
-#    filename (`STRING`).
+# 1. Provides dropdown lists for SD checkpoints (`ckpt_name`, `ckpt_name_2`) and
+#    FLUX UNet files (`flux_unet_name_1`, `flux_unet_name_2`).
+# 2. When executed, it loads the selected models/UNets using appropriate ComfyUI functions
+#    (`comfy.sd.load_checkpoint_guess_config` for SD, `comfy.sd.load_unet` for FLUX).
+# 3. Outputs a list of dictionaries, where each dictionary contains:
+#    - 'model': The loaded model object (SD model or FLUX UNet).
+#    - 'name': The filename of the loaded model/UNet.
+#    - 'type': A string indicating the model type ('SD' or 'FLUX').
 #
 # Inputs:
-# - ckpt_name (COMBO): The filename of the first checkpoint model to load.
-# - ckpt_name_2 (COMBO): Optional: The filename of the second checkpoint model to load for comparison.
+# - ckpt_name (COMBO): Optional: The filename of the first SD checkpoint model.
+# - ckpt_name_2 (COMBO): Optional: The filename of the second SD checkpoint model.
+# - flux_unet_name_1 (COMBO): Optional: The filename of the first FLUX UNet model.
+# - flux_unet_name_2 (COMBO): Optional: The filename of the second FLUX UNet model.
+#   (At least one model must be selected).
 #
 # Outputs:
-# - holaf_model_info_list (HOLAF_MODEL_INFO_LIST): A list containing one or two tuples.
-#   Each tuple is (model_object, ckpt_name_string).
+# - holaf_model_info_list (HOLAF_MODEL_INFO_LIST): A list containing dictionaries,
+#   each describing a loaded model/UNet.
 #
 # Dependencies:
 # - Relies on ComfyUI's internal modules: torch, folder_paths, comfy.sd.
 #
 # Error Handling:
 # - Includes basic error handling for model loading failures.
+# - Raises an error if no models are selected.
 #
 # ==================================================================================
 
 class HolafBenchmarkLoader:
     @classmethod
     def INPUT_TYPES(s):
-        checkpoint_list = folder_paths.get_filename_list("checkpoints")
-        # Add a "None" option to the second list to make it optional
-        checkpoint_list_optional = ["None"] + checkpoint_list
+        # Add "None" to allow deselecting
+        checkpoint_list = ["None"] + folder_paths.get_filename_list("checkpoints")
+        unet_list = ["None"] + folder_paths.get_filename_list("unet") # Get UNet files
+
         return {
-            "required": {
-                 "ckpt_name": (checkpoint_list, ),
-                 },
+            "required": {}, # Nothing strictly required, user must select at least one
             "optional": {
-                 "ckpt_name_2": (checkpoint_list_optional, {"default": "None"}),
+                 "ckpt_name": (checkpoint_list, {"default": "None"}),
+                 "ckpt_name_2": (checkpoint_list, {"default": "None"}),
+                 "flux_unet_name_1": (unet_list, {"default": "None"}), # Input for FLUX UNet 1
+                 "flux_unet_name_2": (unet_list, {"default": "None"}), # Input for FLUX UNet 2
                  }
             }
 
-    RETURN_TYPES = ("HOLAF_MODEL_INFO_LIST",) # Define custom list output type
-    RETURN_NAMES = ("holaf_model_info_list",) # Name for the list output
-    FUNCTION = "load_benchmark_models" # Renamed function
+    RETURN_TYPES = ("HOLAF_MODEL_INFO_LIST",) # Keep custom list output type
+    RETURN_NAMES = ("holaf_model_info_list",) # Keep name for the list output
+    FUNCTION = "load_benchmark_models"
     CATEGORY = "Holaf"
 
     def _load_single_model(self, ckpt_name):
@@ -82,43 +91,66 @@ class HolafBenchmarkLoader:
         print(f"[HolafBenchmarkLoader] Checkpoint '{ckpt_name}' loaded successfully.")
         return loaded_model, ckpt_name
 
-    def load_benchmark_models(self, ckpt_name, ckpt_name_2="None"):
-        """Loads one or two models and returns them as a list of tuples."""
+    def _load_single_unet(self, unet_name):
+        """Helper function to load a single UNet."""
+        if not unet_name or unet_name == "None":
+            return None, None # Return None if no name provided
+
+        print(f"[HolafBenchmarkLoader] Loading UNet: {unet_name}")
+        unet_path = folder_paths.get_full_path("unet", unet_name)
+        if not unet_path:
+            raise FileNotFoundError(f"UNet file not found in unet folder: {unet_name}")
+
+        # Load the UNet using ComfyUI's function
+        loaded_unet = comfy.sd.load_unet(unet_path)
+
+        if loaded_unet is None:
+             raise ValueError(f"UNet loading failed for '{unet_name}', returned None.")
+
+        print(f"[HolafBenchmarkLoader] UNet '{unet_name}' loaded successfully.")
+        # Return the UNet object itself (which is the 'model' for sampling in this context)
+        return loaded_unet, unet_name
+
+    # Updated function signature to accept UNet names
+    def load_benchmark_models(self, ckpt_name="None", ckpt_name_2="None", flux_unet_name_1="None", flux_unet_name_2="None"):
+        """Loads selected SD models and/or FLUX UNets and returns them as a list of dictionaries."""
         model_info_list = []
+        loaded_names = set() # Keep track of loaded names to avoid duplicates
 
-        try:
-            # Load the first model (required)
-            model1, name1 = self._load_single_model(ckpt_name)
-            if model1:
-                model_info_list.append((model1, name1))
-            else:
-                # If the first model fails to load, we can't proceed
-                raise ValueError(f"Failed to load the primary model: {ckpt_name}")
-
-            # Load the second model (optional)
-            if ckpt_name_2 and ckpt_name_2 != "None" and ckpt_name_2 != ckpt_name:
+        # --- Process SD Checkpoints ---
+        for name in [ckpt_name, ckpt_name_2]:
+            if name and name != "None" and name not in loaded_names:
                 try:
-                    model2, name2 = self._load_single_model(ckpt_name_2)
-                    if model2:
-                        model_info_list.append((model2, name2))
-                    # If model2 loading fails, we just proceed with model1
-                except Exception as e_model2:
-                     print(f"[HolafBenchmarkLoader] Warning: Failed to load second model '{ckpt_name_2}': {e_model2}. Proceeding with only the first model.")
-            elif ckpt_name_2 == ckpt_name:
-                 print(f"[HolafBenchmarkLoader] Info: Second model name is the same as the first. Only loading one model.")
+                    model, loaded_name = self._load_single_model(name)
+                    if model:
+                        model_info_list.append({'model': model, 'name': loaded_name, 'type': 'SD'})
+                        loaded_names.add(loaded_name)
+                except Exception as e_sd:
+                     print(f"[HolafBenchmarkLoader] Warning: Failed to load SD model '{name}': {e_sd}. Skipping.")
+            elif name in loaded_names:
+                 print(f"[HolafBenchmarkLoader] Info: SD model name '{name}' already loaded or selected multiple times. Skipping duplicate.")
 
+        # --- Process FLUX UNets ---
+        for name in [flux_unet_name_1, flux_unet_name_2]:
+             if name and name != "None" and name not in loaded_names:
+                 try:
+                     unet_model, loaded_name = self._load_single_unet(name)
+                     if unet_model:
+                         # Store the UNet object directly under the 'model' key
+                         model_info_list.append({'model': unet_model, 'name': loaded_name, 'type': 'FLUX'})
+                         loaded_names.add(loaded_name)
+                 except Exception as e_unet:
+                      print(f"[HolafBenchmarkLoader] Warning: Failed to load FLUX UNet '{name}': {e_unet}. Skipping.")
+             elif name in loaded_names:
+                  print(f"[HolafBenchmarkLoader] Info: FLUX UNet name '{name}' already loaded or selected multiple times. Skipping duplicate.")
 
-            # Return the list containing one or two tuples
-            return (model_info_list,)
+        # --- Validation ---
+        if not model_info_list:
+             raise ValueError("No models or UNets were selected or loaded successfully. Please select at least one valid model.")
 
-        except Exception as e:
-            print(f"[HolafBenchmarkLoader] Error during model loading process: {e}")
-            # import traceback # Uncomment for detailed debug info
-            # print(traceback.format_exc())
-            # How to handle errors? Return None? Raise exception?
-            # Returning None might break downstream nodes expecting a model.
-            # Raising might stop the workflow. Let's re-raise for now.
-            raise e # Re-raise the exception to halt execution clearly
+        # Return the list containing dictionaries
+        print(f"[HolafBenchmarkLoader] Successfully loaded {len(model_info_list)} model(s)/UNet(s): {[item['name'] for item in model_info_list]}")
+        return (model_info_list,)
 
 # Node class mappings for ComfyUI
 NODE_CLASS_MAPPINGS = {
