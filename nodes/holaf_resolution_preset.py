@@ -138,13 +138,13 @@ MODEL_RESOLUTIONS = {
 ASPECT_RATIOS = {
     "9:16 Portrait (Mobile Video)": 9/16,       # 0.5625
     "2:3 Portrait (35mm Photo)": 2/3, # ~0.6667
-    "3:4 Portrait (Classic Monitor/Photo)": 3/4,         # 0.75
+    "3:4 Portrait (Classic Monitor-Photo)": 3/4,         # 0.75
     "4:5 Portrait (Large Format Photo)": 4/5,         # 0.8
-    "1:1 Square (Instagram/Medium Format)": 1.0,
+    "1:1 Square (Instagram-Medium Format)": 1.0,
     "5:4 Landscape (Large Format Photo)": 5/4,         # 1.25
-    "4:3 Landscape (Classic Monitor/Photo)": 4/3,         # ~1.3333
+    "4:3 Landscape (Classic Monitor-Photo)": 4/3,         # ~1.3333
     "3:2 Landscape (35mm Photo)": 3/2, # 1.5
-    "16:9 Landscape (HD Video/Widescreen)": 16/9, # ~1.7778
+    "16:9 Landscape (HD Video-Widescreen)": 16/9, # ~1.7778
     "~2.39:1 Landscape (Anamorphic Cinema)": 2.39, # Approximation for common cinematic wide formats
     "Random": None, # Placeholder for random selection
 }
