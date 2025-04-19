@@ -32,6 +32,7 @@
 #   loading, providing visual confirmation that the custom node package has been
 #   recognized and initialized by ComfyUI.
 # === End Documentation ===
+# Removed HolafGlitchImageNode
 
 # Import classes from the nodes directory
 # Removed import for HolafHello
