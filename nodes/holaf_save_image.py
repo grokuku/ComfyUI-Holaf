@@ -194,21 +194,50 @@ class HolafSaveImage:
 
         # --- Workflow Saving ---
         # Use the potentially updated workflow_path from the loop (for batches)
-        workflow_json = ""
-        if prompt_hidden is not None:
+        workflow_data_to_save = None
+        workflow_json = "" # Initialize workflow_json for the output return
+
+        # Prioritize extra_pnginfo for UI-compatible workflow
+        if extra_pnginfo is not None and 'workflow' in extra_pnginfo:
+            workflow_data_to_save = extra_pnginfo['workflow']
+            print("[Holaf Save Image] Using workflow data from extra_pnginfo.")
+        # Fallback to prompt_hidden if extra_pnginfo is not available or doesn't contain workflow
+        elif prompt_hidden is not None:
+            workflow_data_to_save = prompt_hidden
+            print("[Holaf Save Image] Warning: Using workflow data from prompt_hidden (might be API format).")
+        else:
+             print("[Holaf Save Image] No workflow data found in extra_pnginfo or prompt_hidden.")
+
+
+        if workflow_data_to_save is not None:
             try:
-                # Serialize the original workflow data directly for the output string
-                workflow_json = json.dumps(prompt_hidden, indent=2)
-                
+                # Serialize the chosen workflow data for the output string and file
+                # Ensure workflow_data_to_save is serializable (it should be if from extra_pnginfo or prompt_hidden)
+                if isinstance(workflow_data_to_save, str):
+                     # If it's already a string (less likely for extra_pnginfo['workflow']), parse it first
+                     try:
+                         workflow_json_obj = json.loads(workflow_data_to_save)
+                         workflow_json = json.dumps(workflow_json_obj, indent=2)
+                     except json.JSONDecodeError:
+                         print("[Holaf Save Image] Warning: Workflow data was a string but not valid JSON. Saving as is.")
+                         workflow_json = workflow_data_to_save # Save the raw string if parsing fails
+                else:
+                    # Assume it's a dict/list structure
+                    workflow_json = json.dumps(workflow_data_to_save, indent=2)
+
                 # Save the workflow file if requested
                 if save_workflow:
                     with open(workflow_path, 'w', encoding='utf-8') as f:
-                        f.write(workflow_json) # Write the standard JSON
+                        f.write(workflow_json) # Write the potentially UI-compatible JSON
                     print(f"[Holaf Save Image] Saved workflow to {workflow_path}")
 
             except Exception as e:
                  print(f"[Holaf Save Image] Error serializing/saving workflow: {e}")
+                 # Provide error info in the output string if serialization fails
                  workflow_json = json.dumps({"error": f"Failed to serialize/save workflow: {e}"})
+        else:
+             # Ensure workflow_json output is an empty JSON object string if no data found
+             workflow_json = json.dumps({})
 
 
         return {"ui": {"images": results}, "result": (image, prompt, workflow_json, help_string,)}
