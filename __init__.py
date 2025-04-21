@@ -49,6 +49,7 @@ from .nodes.holaf_resolution_preset import HolafResolutionPreset # Added import 
 from .nodes.HolafBenchmarkRunner import HolafBenchmarkRunner # Added import for Benchmark Runner node
 from .nodes.HolafBenchmarkPlotter import HolafBenchmarkPlotter # Added import for Benchmark Plotter node
 from .nodes.HolafBenchmarkLoader import HolafBenchmarkLoader # Added import for Benchmark Loader node
+from .nodes.holaf_instagram_resize import HolafInstagramResize
 # Removed import for HolafToText
 # Removed import for HolafImageCompare
 # Removed import for HolafAnyToText
@@ -69,6 +70,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafBenchmarkRunner": HolafBenchmarkRunner, # Added mapping for Benchmark Runner node
     "HolafBenchmarkPlotter": HolafBenchmarkPlotter, # Added mapping for Benchmark Plotter node
     "HolafBenchmarkLoader": HolafBenchmarkLoader, # Added mapping for Benchmark Loader node
+    "HolafInstagramResize": HolafInstagramResize,
     # Removed mapping for HolafToText
     # Removed mapping for HolafImageCompare
     # Removed mapping for HolafAnyToText
@@ -93,6 +95,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Removed display name for HolafToText
     # Removed display name for HolafImageCompare
     # Removed display name for HolafAnyToText
+    "HolafInstagramResize": "Instagram Resize (Holaf)",
 }
 
 # Define the web directory for JavaScript files
