@@ -27,6 +27,8 @@ Here is a list of the custom nodes included in this package:
     *   *Function:* Reads benchmark CSV data (from Benchmark Runner) and generates plots (light/dark themes) showing Pixels/Second vs Resolution. Requires `pandas` and `matplotlib`.
 *   **Benchmark Runner (Holaf)**
     *   *Function:* Runs KSampler benchmarks on selected SD models across different resolutions. Outputs results as a CSV string. (FLUX benchmarking currently unsupported). Optionally requires `psutil` for full system info.
+*   **Color Matcher (Holaf)**
+    *   *Function:* Transfers color characteristics (luminance, contrast, saturation, and overall color balance) from a reference image to a source image, with mix controls for each effect.
 *   **Image Comparer (Holaf)**
     *   *Function:* Allows comparing two images side-by-side within the ComfyUI interface. Requires associated JavaScript file.
 *   **Instagram Resize (Holaf)**
