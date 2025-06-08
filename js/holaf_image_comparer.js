@@ -1,103 +1,33 @@
-/* === Documentation ===
- * Author: Cline (AI Assistant) / Adapted from multiple sources
- * Date: 2025-04-01
- *
- * Purpose:
- * This JavaScript file defines the frontend behavior and user interface for the
- * 'HolafImageComparer' custom node in ComfyUI. It allows users to visually
- * compare two sets of images (typically labeled 'A' and 'B') side-by-side
- * directly within the node interface.
- *
- * Key Components:
- * - HolafImageComparerWidget: A custom LiteGraph widget responsible for drawing
- *   the image comparison interface. It handles loading images from URLs provided
- *   by the backend, displaying them, managing selection state (if more than two
- *   images are provided), and rendering the comparison view (either sliding
- *   or clicking to toggle).
- * - HolafImageComparer (Node Class): Extends a base node class (`HolafBaseServerNode`,
- *   which itself seems derived from `LGraphNode`) to represent the node in the
- *   ComfyUI graph. It manages the `HolafImageComparerWidget`, handles mouse
- *   interactions (enter, leave, move, down) to implement the 'Slide' or 'Click'
- *   comparison modes, processes results from the backend (`onExecuted`) to update
- *   the widget's image data, and handles serialization.
- * - Base Classes & Utilities: Includes base classes (`HolafBaseWidget`, `HolafBaseNode`,
- *   `HolafBaseServerNode`) and utility functions (logging, canvas drawing, property
- *   definition) that appear adapted from shared utilities, possibly from another
- *   custom node suite (like rgthree), providing foundational structure.
- * - Extension Registration: Uses `app.registerExtension` and overrides
- *   `LiteGraph.registerNodeType` to integrate the custom node logic and replace
- *   the default server node implementation when ComfyUI loads the corresponding
- *   Python node type.
- *
- * Design Choices & Rationale:
- * - Custom Widget: A dedicated widget (`HolafImageComparerWidget`) is necessary
- *   to create the specialized UI for displaying and interacting with two images.
- * - Image Handling: The widget receives image data (filenames, types, subfolders)
- *   from the backend via the `onExecuted` method of the node. It constructs
- *   image URLs using the ComfyUI API (`api.apiURL('/view?filename=...')`) and
- *   loads them into `Image` objects for display.
- * - Interaction Modes: Supports two modes for comparison, controlled by the
- *   node's "comparer_mode" property:
- *     - 'Slide': Hovering the mouse over the widget reveals the second image
- *       up to the mouse cursor's X position.
- *     - 'Click': Clicking and holding reveals the second image; otherwise, the
- *       first image is shown.
- * - Selection UI (for >2 images): If more than two images (e.g., A1, A2, B1, B2)
- *   are provided by the backend, the widget displays clickable text labels
- *   (A1, A2, B1, B2) above the image area, allowing the user to select which
- *   specific 'A' image and 'B' image are currently being compared.
- * - Backend Communication: Relies on the standard ComfyUI execution flow. The
- *   backend Python node (`nodes/holaf_image_comparer.py`) processes inputs,
- *   saves images, and returns the necessary data (`a_images`, `b_images`) in the
- *   execution results, which the frontend node's `onExecuted` method then uses
- *   to update the widget.
- * - Modularity & Overriding: Uses ComfyUI's extension system and node registration
- *   overrides to cleanly integrate the custom frontend behavior without modifying
- *   core ComfyUI code directly.
- *
- * Dependencies:
- * - ComfyUI core scripts: `app.js`, `api.js`, `widgets.js`.
- * - LiteGraph library (bundled with ComfyUI).
- * === End Documentation ===
- */
-// Combined JavaScript for holaf-comfy
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { ComfyWidgets } from "../../scripts/widgets.js"; // Needed by HolafBaseServerNode
+import { ComfyWidgets } from "../../scripts/widgets.js";
 
-// --- Minimal defineProperty (recreated from shared_utils) ---
-// Helper to ensure properties can be redefined if they exist and are configurable.
+// --- Utility to safely define or redefine object properties ---
 function defineProperty(instance, property, desc) {
     var _a, _b, _c, _d, _e, _f;
     const existingDesc = Object.getOwnPropertyDescriptor(instance, property);
-    // Check if property exists and is not configurable
     if ((existingDesc === null || existingDesc === void 0 ? void 0 : existingDesc.configurable) === false) {
-        // Optionally log or throw error, or just skip redefinition
         console.warn(`[holaf] Cannot redefine non-configurable property "${property}"`);
-        return; // Skip redefinition
-        // OR: throw new Error(`Error: holaf-comfy cannot define un-configurable property "${property}"`);
+        return;
     }
-    // Merge getter/setter if both exist (simple merge, might need adjustment based on original logic)
     if ((existingDesc === null || existingDesc === void 0 ? void 0 : existingDesc.get) && desc.get) {
         const originalGet = existingDesc.get;
         const newGet = desc.get;
         desc.get = function() {
-            originalGet.apply(this, []); // Call original getter (might have side effects)
-            return newGet.apply(this, []); // Call new getter
+            originalGet.apply(this, []);
+            return newGet.apply(this, []);
         };
     }
     if ((existingDesc === null || existingDesc === void 0 ? void 0 : existingDesc.set) && desc.set) {
         const originalSet = existingDesc.set;
         const newSet = desc.set;
         desc.set = function(v) {
-            originalSet.apply(this, [v]); // Call original setter
-            newSet.apply(this, [v]); // Call new setter
+            originalSet.apply(this, [v]);
+            newSet.apply(this, [v]);
         };
     }
-    // Ensure descriptor properties are set, defaulting to existing or standard values
     desc.enumerable = (_b = (_a = desc.enumerable) !== null && _a !== void 0 ? _a : existingDesc === null || existingDesc === void 0 ? void 0 : existingDesc.enumerable) !== null && _b !== void 0 ? _b : true;
     desc.configurable = (_d = (_c = desc.configurable) !== null && _c !== void 0 ? _c : existingDesc === null || existingDesc === void 0 ? void 0 : existingDesc.configurable) !== null && _d !== void 0 ? _d : true;
-    // Set writable only if it's a data descriptor (no get/set)
     if (!desc.get && !desc.set) {
         desc.writable = (_f = (_e = desc.writable) !== null && _e !== void 0 ? _e : existingDesc === null || existingDesc === void 0 ? void 0 : existingDesc.writable) !== null && _f !== void 0 ? _f : true;
     }
@@ -105,23 +35,23 @@ function defineProperty(instance, property, desc) {
 }
 
 
-// --- Logging Setup ---
+// --- Simple Logging Utility ---
 var LogLevel;
 (function (LogLevel) {
     LogLevel[LogLevel["ERROR"] = 2] = "ERROR";
     LogLevel[LogLevel["WARN"] = 3] = "WARN";
     LogLevel[LogLevel["INFO"] = 4] = "INFO";
-    LogLevel[LogLevel["DEV"] = 6] = "DEV"; // Added DEV level for base node logging
+    LogLevel[LogLevel["DEV"] = 6] = "DEV";
 })(LogLevel || (LogLevel = {}));
 
 const LogLevelToMethod = {
     [LogLevel.ERROR]: "error",
     [LogLevel.WARN]: "warn",
     [LogLevel.INFO]: "info",
-    [LogLevel.DEV]: "log", // Map DEV to console.log
+    [LogLevel.DEV]: "log",
 };
 
-let GLOBAL_LOG_LEVEL = LogLevel.WARN; // Default to WARN
+let GLOBAL_LOG_LEVEL = LogLevel.WARN;
 
 class Logger {
     log(level, message, ...args) {
@@ -131,20 +61,19 @@ class Logger {
             (_a = console[method]) === null || _a === void 0 ? void 0 : _a.call(console, `[holaf] ${message}`, ...args);
         }
     }
-     logParts(level, message, ...args) { // Keep logParts for base_node compatibility
+     logParts(level, message, ...args) {
         if (level <= GLOBAL_LOG_LEVEL) {
             const method = LogLevelToMethod[level] || "log";
-            const prefix = '[holaf] '; // Simplified prefix
-            // Basic formatting, no CSS for simplicity in combined file
+            const prefix = '[holaf] ';
             return [method, [prefix + message, ...args]];
         }
         return ["none", []];
     }
 }
-const logger = new Logger(); // Global logger instance
+const logger = new Logger();
 
 
-// --- Canvas Utilities (from utils_canvas.js) ---
+// --- Canvas Drawing Utilities ---
 function binarySearch(max, getValue, match) {
     let min = 0;
     while (min <= max) {
@@ -216,20 +145,15 @@ function drawRoundedRectangle(ctx, options) {
     !lowQuality && ctx.stroke();
 }
 
-// drawNumberWidgetPart, drawTogglePart, drawInfoIcon are likely unused by image comparer, omitted for brevity
 
-
-// --- Base Widget (from utils_widgets.js) ---
+// --- Base class for custom widgets ---
 class HolafBaseWidget {
     constructor(name) {
         this.name = name;
-        // FIX: Do not assign this.value here to prevent premature setter call in subclass
-        // this.value = null;
         this.options = { serialize: false };
         this.type = "custom";
-        // Add properties expected by HolafImageComparerWidget if any were missed
-        this.y = 0; // Seems needed by HolafImageComparerWidget draw logic
-        this.last_y = 0; // Seems needed by HolafImageComparerWidget draw logic
+        this.y = 0;
+        this.last_y = 0;
     }
     draw(ctx, node, width, posY, height) { }
     computeSize(width) { return [width, LiteGraph.NODE_WIDGET_HEIGHT]; }
@@ -238,8 +162,8 @@ class HolafBaseWidget {
 }
 
 
-// --- Base Node (from base_node.js) ---
-const OVERRIDDEN_SERVER_NODES = new Map(); // Keep this global for the override logic
+// --- Base class for custom nodes, extending LiteGraph's LGraphNode ---
+const OVERRIDDEN_SERVER_NODES = new Map();
 
 class HolafBaseNode extends LGraphNode {
     constructor(title = HolafBaseNode.title, skipOnConstructedCall = true) {
@@ -247,12 +171,11 @@ class HolafBaseNode extends LGraphNode {
         this.comfyClass = "__NEED_COMFY_CLASS__";
         this.nickname = "holaf";
         this.isVirtualNode = false;
-        this.isDropEnabled = false; // Disabled drag/drop features
+        this.isDropEnabled = false;
         this.removed = false;
         this.configuring = false;
         this._tempWidth = 0;
         this.__constructed__ = false;
-        // Removed helpDialog initialization
 
         if (title == "__NEED_CLASS_TITLE__") { throw new Error("HolafBaseNode needs overrides."); }
         this.widgets = this.widgets || [];
@@ -264,9 +187,8 @@ class HolafBaseNode extends LGraphNode {
             this.checkAndRunOnConstructed();
         });
 
-        // Keep mode property definition if needed, otherwise remove
         defineProperty(this, "mode", {
-            get: () => { return this.rgthree_mode; /* TODO: Rename this internal property? */ },
+            get: () => { return this.rgthree_mode; },
             set: (mode) => {
                 if (this.rgthree_mode != mode) {
                     const oldMode = this.rgthree_mode;
@@ -281,7 +203,6 @@ class HolafBaseNode extends LGraphNode {
         var _a;
         if (!this.__constructed__) {
             this.onConstructed();
-            // Use the global logger instance
             const [n, v] = logger.logParts(LogLevel.DEV, `[HolafBaseNode] Child class did not call onConstructed for "${this.type}.`);
             (_a = console[n]) === null || _a === void 0 ? void 0 : _a.call(console, ...v);
         }
@@ -293,7 +214,6 @@ class HolafBaseNode extends LGraphNode {
         if (this.__constructed__) return false;
         this.type = (_a = this.type) !== null && _a !== void 0 ? _a : undefined;
         this.__constructed__ = true;
-        // Simplified - invokeExtensionsAsync was removed
         return this.__constructed__;
     }
 
@@ -313,7 +233,7 @@ class HolafBaseNode extends LGraphNode {
     }
 
     onModeChange(from, to) { }
-    async handleAction(action) { action; } // No-op
+    async handleAction(action) { action; }
 
     removeWidget(widgetOrSlot) {
         if (!this.widgets) { return; }
@@ -358,7 +278,6 @@ class HolafBaseNode extends LGraphNode {
         } else if ((_c = (_b = this.constructor.nodeType) === null || _b === void 0 ? void 0 : _b.prototype) === null || _c === void 0 ? void 0 : _c.getExtraMenuOptions) {
             (_f = (_e = (_d = this.constructor.nodeType) === null || _d === void 0 ? void 0 : _d.prototype) === null || _e === void 0 ? void 0 : _e.getExtraMenuOptions) === null || _f === void 0 ? void 0 : _f.apply(this, [canvas, options]);
         }
-        // Removed help menu item addition
         return options;
     }
 }
@@ -368,7 +287,7 @@ HolafBaseNode.type = "__NEED_CLASS_TYPE__";
 HolafBaseNode.category = "holaf";
 HolafBaseNode._category = "holaf";
 
-// HolafBaseVirtualNode might be unused now, but keep for structure if needed later
+
 class HolafBaseVirtualNode extends HolafBaseNode {
     constructor(title = HolafBaseNode.title) {
         super(title, false);
@@ -381,13 +300,14 @@ class HolafBaseVirtualNode extends HolafBaseNode {
     }
 }
 
+// --- Base class for nodes that interact with the server backend ---
 class HolafBaseServerNode extends HolafBaseNode {
     constructor(title) {
         super(title, true);
-        this.isDropEnabled = false; // Disable drop by default in simplified version
+        this.isDropEnabled = false;
         this.serialize_widgets = true;
-        this.setupFromServerNodeData(); // Call setup
-        this.onConstructed(); // Ensure base onConstructed is called
+        this.setupFromServerNodeData();
+        this.onConstructed();
     }
 
     getWidgets() { return ComfyWidgets; }
@@ -407,21 +327,16 @@ class HolafBaseServerNode extends HolafBaseNode {
         for (const inputName in inputs) {
             const inputData = inputs[inputName];
             const type = inputData[0];
-            // Simplified widget creation logic - check if PreviewImage handles this
              if ((_a = inputData[1]) === null || _a === void 0 ? void 0 : _a.forceInput) {
                  this.addInput(inputName, type);
              } else {
-                 // Assume PreviewImage or core handles widget creation for IMAGE inputs
-                 // Add input only if no widget is implicitly created by the type
-                 // This might need adjustment based on how PreviewImage works
-                 if (type !== "IMAGE" && type !== "MASK") { // Common types handled by PreviewImage?
+                 if (type !== "IMAGE" && type !== "MASK") {
                     let widgetCreated = true;
                     if (Array.isArray(type)) { Object.assign(config, WIDGETS.COMBO(this, inputName, inputData, app) || {}); }
                     else if (`${type}:${inputName}` in WIDGETS) { Object.assign(config, WIDGETS[`${type}:${inputName}`](this, inputName, inputData, app) || {}); }
                     else if (type in WIDGETS) { Object.assign(config, WIDGETS[type](this, inputName, inputData, app) || {}); }
                     else { this.addInput(inputName, type); widgetCreated = false; }
 
-                    // Keep forceInput/defaultInput options if widget was created
                     if (widgetCreated && ((_b = inputData[1]) === null || _b === void 0 ? void 0 : _b.forceInput) && (config === null || config === void 0 ? void 0 : config.widget)) {
                         if (!config.widget.options) config.widget.options = {};
                         config.widget.options.forceInput = inputData[1].forceInput;
@@ -431,14 +346,13 @@ class HolafBaseServerNode extends HolafBaseNode {
                         config.widget.options.defaultInput = inputData[1].defaultInput;
                     }
                  } else {
-                     // Add inputs for types potentially handled by PreviewImage base
                      this.addInput(inputName, type);
                  }
              }
         }
         for (const o in nodeData["output"]) {
             let output = nodeData["output"][o];
-            if (output instanceof Array) output = "COMBO"; // Keep COMBO handling
+            if (output instanceof Array) output = "COMBO";
             const outputName = nodeData["output_name"][o] || output;
             const outputShape = nodeData["output_is_list"][o] ? LiteGraph.GRID_SHAPE : LiteGraph.CIRCLE_SHAPE;
             this.addOutput(outputName, output, { shape: outputShape });
@@ -450,6 +364,7 @@ class HolafBaseServerNode extends HolafBaseNode {
         this.serialize_widgets = true;
     }
 
+    // Registers a custom node class to override a default ComfyUI server node.
     static registerForOverride(comfyClass, nodeData, holafClass) {
         if (OVERRIDDEN_SERVER_NODES.has(comfyClass)) { throw Error(`Already have a class to override ${comfyClass.type || comfyClass.name || comfyClass.title}`); }
         OVERRIDDEN_SERVER_NODES.set(comfyClass, holafClass);
@@ -467,21 +382,22 @@ HolafBaseServerNode.nodeData = null;
 HolafBaseServerNode.__registeredForOverride__ = false;
 
 
-// --- Image Comparer Widget (from image_comparer.js) ---
+// --- The main UI widget for the Image Comparer node ---
 class HolafImageComparerWidget extends HolafBaseWidget {
      constructor(name, node) {
         super(name);
         this.hitAreas = {};
         this.selected = [];
-        this._value = { images: [] }; // Initialize _value here
+        this._value = { images: [] };
         this.node = node;
     }
 
+    // Setter for the widget's value, processing image data from the node.
     set value(v) {
         let cleanedVal;
-        // FIX: Add null/undefined check for v
+        // Handle null or undefined input value.
         if (!v) {
-            cleanedVal = []; // Default to empty array if v is null/undefined
+            cleanedVal = [];
         } else if (Array.isArray(v)) {
             cleanedVal = v.map((d, i) => {
                 if (!d || typeof d === "string") {
@@ -490,7 +406,6 @@ class HolafImageComparerWidget extends HolafBaseWidget {
                 return d;
             });
         } else {
-            // Now it's safe to access v.images if v is an object
             cleanedVal = v.images || [];
         }
         if (cleanedVal.length > 2) {
@@ -505,9 +420,8 @@ class HolafImageComparerWidget extends HolafBaseWidget {
             const firstNonSelected = cleanedVal.find((d) => !d.selected);
             if (firstNonSelected) { firstNonSelected.selected = true; }
         }
-        // FIX: Ensure this._value exists before assigning to its property
         if (!this._value) {
-          this._value = { images: [] }; // Initialize if it doesn't exist (redundant due to constructor init, but safe)
+          this._value = { images: [] };
         }
         this._value.images = cleanedVal;
         selected = cleanedVal.filter((d) => d.selected);
@@ -516,21 +430,16 @@ class HolafImageComparerWidget extends HolafBaseWidget {
 
     get value() { return this._value; }
 
+    // Updates the currently selected images for comparison.
     setSelected(selected) {
-        // Ensure _value exists (might be redundant if constructor always runs first, but safe)
         if (!this._value) { this._value = { images: [] }; }
         this._value.images.forEach((d) => (d.selected = false));
 
-        // FIX: Check if this.node exists AND this.node.imgs is an array before accessing its properties
-        const nodeImgs = []; // Create temporary array
+        const nodeImgs = [];
         if (this.node) {
-            // Ensure this.node.imgs is initialized as an array if it doesn't exist
             if (!Array.isArray(this.node.imgs)) {
                 this.node.imgs = [];
             }
-            // Now safe to clear and push
-            // this.node.imgs.length = 0; // Clear previous images - MOVED below loop
-
             for (const sel of selected) {
                 if (sel) {
                     if (!sel.img) {
@@ -538,19 +447,20 @@ class HolafImageComparerWidget extends HolafBaseWidget {
                         sel.img.src = sel.url;
                     }
                     sel.selected = true;
-                    nodeImgs.push(sel.img); // Add the image object to temp array
+                    nodeImgs.push(sel.img);
                 }
             }
-            this.node.imgs = nodeImgs; // Assign the collected images to the node
+            this.node.imgs = nodeImgs;
         }
         this.selected = selected.slice(0, 2);
         while (this.selected.length < 2) { this.selected.push(null); }
     }
 
+    // Main drawing method for the widget.
     draw(ctx, node, width, y) {
         var _a;
         this.hitAreas = {};
-        // Ensure this.value exists before accessing length
+        // If more than two images exist, draw selection labels (A1, A2, B1, etc.).
         if (this.value && this.value.images.length > 2) {
             ctx.save();
             ctx.textAlign = "left";
@@ -578,6 +488,7 @@ class HolafImageComparerWidget extends HolafBaseWidget {
             ctx.restore();
             y += 20;
         }
+        // Draw the main comparison images based on the selected mode.
         if (((_a = node.properties) === null || _a === void 0 ? void 0 : _a["comparer_mode"]) === "Click") {
             this.drawImage(ctx, this.selected[this.node.isPointerDown ? 1 : 0], y);
         } else {
@@ -588,20 +499,20 @@ class HolafImageComparerWidget extends HolafBaseWidget {
         }
     }
 
+    // Handles clicks on the A/B selection labels.
     onSelectionDown(event, pos, node, part) {
         const selected = [...this.selected];
         const clickedData = part.data;
         if (clickedData.name.startsWith("A")) { selected[0] = clickedData; }
         else if (clickedData.name.startsWith("B")) { selected[1] = clickedData; }
-        else { // Fallback logic
+        else {
             if (clickedData.name.startsWith("A")) { selected[0] = clickedData; }
             else { selected[1] = clickedData; }
         }
-        // Ensure only two are selected (simplified logic)
         let currentSelected = selected.filter(s => s && s.selected);
          if (currentSelected.length > 2) {
-             if (selected[0] === clickedData && selected[1] && selected[1] !== clickedData) { /* Keep selected[1] */ }
-             else if (selected[1] === clickedData && selected[0] && selected[0] !== clickedData) { /* Keep selected[0] */ }
+             if (selected[0] === clickedData && selected[1] && selected[1] !== clickedData) { }
+             else if (selected[1] === clickedData && selected[0] && selected[0] !== clickedData) { }
              else {
                  const otherSelected = this._value.images.find(img => img.selected && img !== clickedData);
                  if (clickedData.name.startsWith("A")) {
@@ -615,6 +526,7 @@ class HolafImageComparerWidget extends HolafBaseWidget {
         node.setDirtyCanvas(true, true);
     }
 
+    // Draws a single image, handling aspect ratio, scaling, and optional cropping for the 'Slide' mode.
     drawImage(ctx, image, y, cropX) {
         var _a, _b;
         if (!image || !image.img || !image.img.naturalWidth || !image.img.naturalHeight) { return; }
@@ -655,14 +567,12 @@ class HolafImageComparerWidget extends HolafBaseWidget {
 
     computeSize(width) {
         let height = 200;
-        // Ensure this.value exists before accessing length
         if (this.value && this.value.images.length > 2) { height += 20; }
         return [width, height];
     }
 
     serializeValue(node, index) {
         const v = [];
-        // Ensure this._value exists before accessing images
         for (const data of (this._value?.images || [])) {
              if (data) {
                 const d = { ...data }; delete d.img; v.push(d);
@@ -673,8 +583,8 @@ class HolafImageComparerWidget extends HolafBaseWidget {
 }
 
 
-// --- Image Comparer Node (from image_comparer.js) ---
-function imageDataToUrl(data) { // Keep this utility function local
+// --- The main LiteGraph node for the Image Comparer ---
+function imageDataToUrl(data) {
     return api.apiURL(`/view?filename=${encodeURIComponent(data.filename)}&type=${data.type}&subfolder=${data.subfolder}${app.getPreviewFormatParam()}${app.getRandParam()}`);
 }
 
@@ -691,6 +601,7 @@ class HolafImageComparer extends HolafBaseServerNode {
         this.properties["comparer_mode"] = "Slide";
     }
 
+    // Receives data from the Python backend after execution and updates the widget.
     onExecuted(output) {
         var _a;
         (_a = super.onExecuted) === null || _a === void 0 ? void 0 : _a.call(this, output);
@@ -731,30 +642,33 @@ class HolafImageComparer extends HolafBaseServerNode {
         if (this.isPointerDown) { requestAnimationFrame(() => { this.setIsPointerDown(); }); }
     }
 
+    // Mouse event handlers to manage interaction modes (Slide/Click).
     onMouseDown(event, pos, canvas) { var _a; (_a = super.onMouseDown) === null || _a === void 0 ? void 0 : _a.call(this, event, pos, canvas); this.setIsPointerDown(true); return false; }
     onMouseEnter(event) { var _a; (_a = super.onMouseEnter) === null || _a === void 0 ? void 0 : _a.call(this, event); this.setIsPointerDown(!!app.canvas.pointer_is_down); this.isPointerOver = true; }
     onMouseLeave(event) { var _a; (_a = super.onMouseLeave) === null || _a === void 0 ? void 0 : _a.call(this, event); this.setIsPointerDown(false); this.isPointerOver = false; }
     onMouseMove(event, pos, canvas) { var _a; (_a = super.onMouseMove) === null || _a === void 0 ? void 0 : _a.call(this, event, pos, canvas); this.pointerOverPos = [...pos]; this.imageIndex = this.pointerOverPos[0] > this.size[0] / 2 ? 1 : 0; }
 
-    getHelp() { /* ... help text ... */ return ` ... help text ... `; } // Keep help text
+    getHelp() { return ` ... help text ... `; }
 
+    // Static setup method to register this node class for overriding.
     static setUp(comfyClass, nodeData) { HolafBaseServerNode.registerForOverride(comfyClass, nodeData, HolafImageComparer); }
     static onRegisteredForOverride(comfyClass) { setTimeout(() => { HolafImageComparer.category = comfyClass.category; }); }
 }
-HolafImageComparer.title = "image comparer (holaf)"; // Updated Name
-HolafImageComparer.type = "HolafImageComparer"; // Use Class Name
-HolafImageComparer.comfyClass = "HolafImageComparer"; // Use Class Name
+HolafImageComparer.title = "image comparer (holaf)";
+HolafImageComparer.type = "HolafImageComparer";
+HolafImageComparer.comfyClass = "HolafImageComparer";
 HolafImageComparer["@comparer_mode"] = { type: "combo", values: ["Slide", "Click"] };
 
 
-// --- LiteGraph Node Type Override ---
+// --- ComfyUI Integration ---
+
+// Override the default LiteGraph node registration to inject custom node classes.
 const oldregisterNodeType = LiteGraph.registerNodeType;
 LiteGraph.registerNodeType = async function (nodeId, baseClass) {
     var _a;
     const clazz = OVERRIDDEN_SERVER_NODES.get(baseClass) || baseClass;
     if (clazz !== baseClass) {
         const classLabel = clazz.type || clazz.name || clazz.title;
-        // Use global logger
         const [n, v] = logger.logParts(LogLevel.DEBUG, `${nodeId}: replacing default ComfyNode implementation with custom ${classLabel} class.`);
         (_a = console[n]) === null || _a === void 0 ? void 0 : _a.call(console, ...v);
     }
@@ -762,29 +676,25 @@ LiteGraph.registerNodeType = async function (nodeId, baseClass) {
 };
 
 
-// --- Main Extension Setup (from original holaf.js) ---
+// Main extension object for registration with ComfyUI.
 const holaf = {
     name: "holaf.comfy",
     init() { logger.log(LogLevel.INFO, "Init"); },
     setup() { logger.log(LogLevel.INFO, "Setup"); },
-    // Add other lifecycle methods if needed, e.g., loadedGraphNode
 };
 
-// --- Register Main Extension ---
 app.registerExtension(holaf);
 logger.log(LogLevel.INFO, "Holaf extension registered.");
 
 
-// --- Register Node Override ---
+// Register the specific override for the HolafImageComparer node.
 app.registerExtension({
-    name: "holaf.ImageComparer.Override", // Unique name for this registration part
+    name: "holaf.ImageComparer.Override",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        // Use the correct type comparison from the node class static property
-        if (nodeData.name === HolafImageComparer.type) { // Type check should still work
-            HolafImageComparer.setUp(nodeType, nodeData); // Call the static setup
+        if (nodeData.name === HolafImageComparer.type) {
+            HolafImageComparer.setUp(nodeType, nodeData);
         }
     },
 });
 
-// Optional: Assign to window for debugging
 window.holaf = holaf;

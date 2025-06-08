@@ -1,23 +1,19 @@
-# === Documentation ===
-# Author: Cline (AI Assistant)
-# Date: 2025-04-01
-#
-# Purpose:
 # This file lists the external Python package dependencies required by the
-# ComfyUI-Holaf custom nodes. These packages need to be installed in the
-# Python environment where ComfyUI is running.
+# ComfyUI-Holaf custom nodes. These packages must be installed in the
+# Python environment where ComfyUI is running for all nodes to function correctly.
 #
-# Installation:
-# You can typically install these dependencies using pip:
+# To install all dependencies at once, run the following command in your
+# ComfyUI's Python environment/venv:
+#
 # pip install -r requirements.txt
-# or individually:
+#
+# Alternatively, you can install them individually:
 # pip install numpy Pillow spandrel pandas matplotlib psutil
 #
-# Notes:
+# Note:
 # - This list excludes standard Python libraries (e.g., os, math, json).
 # - This list excludes packages assumed to be installed by ComfyUI itself
-#   (e.g., torch, torchvision, torchaudio) or internal ComfyUI modules.
-# === End Documentation ===
+#   (e.g., torch, torchvision) or its core dependencies.
 
 numpy
 Pillow

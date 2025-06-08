@@ -1,25 +1,12 @@
-# === Documentation ===
-# Author: Cline (AI Assistant)
-# Date: 2025-04-21
-#
-# Purpose:
-# This file defines the 'HolafInstagramResize' custom node for ComfyUI.
-# It resizes an image to the closest Instagram-compatible ratio (1:1, 4:5, or 16:9)
-# without cropping, adding colored bars (letterboxing or pillarboxing) to fill the empty space.
-#
-# Features:
-# - Automatic ratio selection: Determines the closest Instagram-compatible ratio to the input image.
-# - Color filling: Adds colored bars to maintain the aspect ratio without cropping.
-# - User-defined fill color: Allows the user to specify the fill color.
-# - Automatic color selection: Option to automatically choose a fill color based on the image content.
-#
-# === End Documentation ===
-
 import torch
 from PIL import Image, ImageColor
 import numpy as np
 
 class HolafInstagramResize:
+    """
+    Resizes an image to the nearest Instagram aspect ratio (1:1, 4:5, 16:9)
+    by adding colored bars (letterboxing/pillarboxing) instead of cropping.
+    """
     def __init__(self):
         pass
 
@@ -28,7 +15,9 @@ class HolafInstagramResize:
         return {
             "required": {
                 "image": ("IMAGE",),
-                "fill_color": ("STRING", {"default": "black"}),  # String for color names
+                # The color for the background bars (e.g., "black", "#FF0000").
+                "fill_color": ("STRING", {"default": "black"}),
+                # If True, automatically determines the fill color from the image's edges.
                 "auto_color": ("BOOLEAN", {"default": False}),
             },
         }
@@ -39,99 +28,93 @@ class HolafInstagramResize:
     CATEGORY = "Holaf"
 
     def resize_image(self, image, fill_color, auto_color):
-        # Convert tensor to PIL image
+        # Convert the input tensor (Batch, H, W, C) to a single PIL Image.
         img_array = image.cpu().numpy() * 255.0
         img_array = np.clip(img_array, 0, 255).astype(np.uint8)
-        img = Image.fromarray(img_array[0]) # Assuming a batch size of 1 for now
+        img = Image.fromarray(img_array[0])
 
-        # Get image dimensions
         width, height = img.size
         aspect_ratio = width / height
 
-        # Define Instagram-compatible ratios
+        # Define the target Instagram-compatible ratios.
         ratios = {
             "1:1": 1.0,
             "4:5": 0.8,
             "16:9": 1.7777777777777777,
         }
 
-        # Determine the closest ratio
+        # Find the closest target ratio to the image's current ratio.
         closest_ratio_name = min(ratios, key=lambda k: abs(ratios[k] - aspect_ratio))
         closest_ratio = ratios[closest_ratio_name]
 
-        # Calculate the dimensions of the final canvas to fit the original image + padding
+        # Calculate the final canvas dimensions.
         if aspect_ratio > closest_ratio:
-            # Image is wider than the target ratio. Needs letterboxing (bars top/bottom).
-            # Final canvas width = original width.
-            # Final canvas height = original width / target ratio.
+            # Image is wider than the target: needs letterboxing (bars top/bottom).
+            # The canvas width is the original image width.
+            # The canvas height is calculated based on the target ratio.
             final_width = width
-            final_height = int(round(width / closest_ratio)) # Use round for better accuracy
+            final_height = int(round(width / closest_ratio))
         elif aspect_ratio < closest_ratio:
-            # Image is taller than the target ratio. Needs pillarboxing (bars left/right).
-            # Final canvas height = original height.
-            # Final canvas width = original height * target ratio.
-            final_width = int(round(height * closest_ratio)) # Use round for better accuracy
+            # Image is taller than the target: needs pillarboxing (bars left/right).
+            # The canvas height is the original image height.
+            # The canvas width is calculated based on the target ratio.
+            final_width = int(round(height * closest_ratio))
             final_height = height
         else:
-             # Image already matches the target ratio
+             # Image already matches the target ratio.
              final_width = width
              final_height = height
 
-
-        # Determine fill color
+        # Determine the fill color.
         if auto_color:
             fill_color = self.get_dominant_edge_color(img)
             if fill_color is None:
                 fill_color = "black"
 
-        # Parse fill color string
+        # Parse the color string and fall back to black if the color name is invalid.
         try:
             fill_color_rgb = ImageColor.getcolor(fill_color, "RGB")
         except ValueError:
             print(f"[Holaf Instagram Resize] Invalid color name: {fill_color}. Using black instead.")
-            fill_color_rgb = (0, 0, 0)  # Black
+            fill_color_rgb = (0, 0, 0)
 
-        # Create a new image with the FINAL dimensions and fill color
+        # Create a new blank canvas with the final dimensions and fill color.
         resized_img = Image.new("RGB", (final_width, final_height), fill_color_rgb)
 
-        # Calculate the position to paste the original image onto the new canvas
+        # Calculate offsets to center the original image on the new canvas.
         x_offset = (final_width - width) // 2
         y_offset = (final_height - height) // 2
 
-        # Paste the original image onto the center of the new image
+        # Paste the original image onto the canvas.
         resized_img.paste(img, (x_offset, y_offset))
 
-        # Convert back to tensor
+        # Convert the final PIL Image back to a torch tensor for ComfyUI.
         resized_img_array = np.array(resized_img).astype(np.float32) / 255.0
-        resized_img_array = np.expand_dims(resized_img_array, axis=0)  # Add batch dimension
+        resized_img_array = np.expand_dims(resized_img_array, axis=0)
         resized_img_tensor = torch.from_numpy(resized_img_array).float()
 
         return (resized_img_tensor,)
 
-    # === Helper Functions (To be implemented later) ===
     def get_dominant_edge_color(self, image):
         """
-        Analyzes the image to determine the dominant color along the edges.
-        Returns the average color as a string (e.g., "rgb(255, 0, 0)").
+        Analyzes the image edges to find the average color.
         """
         width, height = image.size
 
-        # Extract pixel data from the edges
+        # Collect all pixels from the top, bottom, left, and right edges.
         pixels_top = list(image.getdata())[:width]
         pixels_bottom = list(image.getdata())[width * (height - 1):]
         pixels_left = [image.getpixel((0, y)) for y in range(height)]
         pixels_right = [image.getpixel((width - 1, y)) for y in range(height)]
-
-        # Combine all edge pixels
         all_edge_pixels = pixels_top + pixels_bottom + pixels_left + pixels_right
 
-        # Calculate the average color
+        # Calculate the average R, G, B values.
         r_values = [pixel[0] for pixel in all_edge_pixels]
         g_values = [pixel[1] for pixel in all_edge_pixels]
         b_values = [pixel[2] for pixel in all_edge_pixels]
-
         average_r = int(sum(r_values) / len(r_values))
         average_g = int(sum(g_values) / len(g_values))
         average_b = int(sum(b_values) / len(b_values))
 
+        # Return the color as an "rgb(r,g,b)" string.
         return f"rgb({average_r}, {average_g}, {average_b})"

@@ -1,110 +1,45 @@
-# === Documentation ===
-# Author: Cline (AI Assistant)
-# Date: 2025-04-01
-#
-# Purpose:
-# This file defines the 'HolafKSampler' custom node for ComfyUI. It acts as a
-# wrapper around the core ComfyUI sampling functionality (`comfy.sample.sample`),
-# providing flexibility in input type (latent or image) and handling device
-# placement for inputs and outputs. It appears to be a simplified version,
-# potentially refactored from an earlier iteration that included tiling capabilities.
-#
-# Design Choices & Rationale:
-# - Input Flexibility: Accepts either a 'latent' or an 'image' as the starting point,
-#   controlled by the 'input_type' parameter. If an image is provided, it's
-#   encoded using the provided VAE. This increases the node's versatility.
-# - Device Management: Explicitly manages the device placement of tensors.
-#   Input latent, noise, and conditioning are moved to the model's execution
-#   device before sampling. Final latent and image outputs are moved to an
-#   intermediate device (typically CPU) afterwards. This ensures compatibility
-#   across different hardware configurations (CPU/GPU).
-# - Conditioning Preparation (`prepare_cond_for_tile`): A helper function creates
-#   deep copies of the positive and negative conditioning lists and moves the
-#   tensors within these copies to the target device. Deep copying prevents
-#   unintended modifications to the original conditioning data passed into the node.
-# - Model Cloning: The input 'model' (ModelPatcher) is cloned before sampling.
-#   This is standard practice in ComfyUI samplers to isolate the sampling
-#   process and prevent state conflicts if the same model is used elsewhere
-#   in the workflow concurrently.
-# - Core Sampler Integration: Leverages the built-in `comfy.sample.sample`
-#   function for the actual diffusion sampling process, ensuring consistency
-#   with ComfyUI's standard samplers and schedulers.
-# - Simplified Preview Callback: The progress callback (`preview_callback`) is
-#   implemented but currently only updates a progress bar (`comfy.utils.ProgressBar`).
-#   Image preview generation within the callback seems to have been removed,
-#   possibly for performance reasons or because previews are handled differently
-#   in the intended workflows for this node.
-# - Passthrough Outputs: Returns the original model, conditioning, and VAE inputs
-#   alongside the generated latent and image, facilitating chaining with subsequent nodes.
-# - Refactoring Evidence: Comments and the structure (e.g., `prepare_cond_for_tile`
-#   name despite no explicit tiling in this class, removed tiling parameters)
-#   suggest this node might be a result of refactoring, potentially simplifying
-#   a more complex tiled sampler or serving as a base class.
-# === End Documentation ===
-
 import torch
-import math
-import numpy as np
-# from tqdm import tqdm # Removed unused import
-import copy # Re-add copy for deepcopy
-
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
-from comfy.model_patcher import ModelPatcher
-import server # Import the server instance (though might become unused)
-# Removed base64, io, Image imports
-
-# Tensor related imports might be needed later
-# from comfy.ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, make_ddim_timesteps, noise_like
+import copy
 
 def prepare_cond_for_tile(original_cond_list, device):
     """
-    Creates a deep copy of the conditioning list for a tile and moves tensors within the copy to the specified device.
-    Returns the new list structure.
+    Deep copies a conditioning list and moves all its tensors to the specified device.
+    This prevents modifying the original conditioning data and ensures tensors are on the correct
+    device for the sampling process.
     """
     if not isinstance(original_cond_list, list):
-        # print(f"Warning: Conditioning input is not a list, but type {type(original_cond_list)}. Returning empty list.")
-        return [] # Return empty list if not a list
+        return []
 
     cond_list_copy = copy.deepcopy(original_cond_list)
     for i, item in enumerate(cond_list_copy):
+        # Handle the standard conditioning format: [tensor, {dict}]
         if isinstance(item, (list, tuple)) and len(item) >= 1 and torch.is_tensor(item[0]):
-            # Standard format: [tensor, {dict}] - move tensor in the copy
             if item[0].device != device:
-                try:
-                    cond_list_copy[i][0] = item[0].to(device)
-                except Exception as e:
-                    print(f"Error moving tensor to device {device}: {e}")
-            # Ensure the dict exists if only tensor was present in original
+                cond_list_copy[i][0] = item[0].to(device)
+            # Ensure the dictionary part exists.
             if len(item) == 1:
                  cond_list_copy[i].append({})
-            elif not isinstance(item[1], dict): # Ensure second element is a dict if tensor exists
-                 print(f"Warning: Conditioning item format issue. Expected dict as second element, got {type(item[1])}. Replacing with empty dict.")
-                 cond_list_copy[i] = [cond_list_copy[i][0], {}]
-
+        # Handle cases where the list contains just a tensor.
         elif torch.is_tensor(item):
-            # Handle cases where the list might just contain tensors - move tensor in the copy
             tensor_on_device = item
             if item.device != device:
-                 try:
-                     tensor_on_device = item.to(device)
-                 except Exception as e:
-                     print(f"Error moving tensor to device {device}: {e}")
-            # Replace the tensor with the standard [tensor, {}] format in the copy
+                 tensor_on_device = item.to(device)
             cond_list_copy[i] = [tensor_on_device, {}]
-        # Ignore other formats (already copied by deepcopy)
 
     return cond_list_copy
 
-
-# Renamed class
 class HolafKSampler:
+    """
+    A wrapper for the core ComfyUI sampler.
+    It supports direct image input (which is automatically VAE-encoded),
+    provides an option to clear VRAM before sampling, and passes through
+    the main components for easy chaining.
+    """
     @classmethod
     def INPUT_TYPES(s):
-        # Get available sampler and scheduler names from ComfyUI
-        samplers = comfy.samplers.KSampler.SAMPLERS
-        schedulers = comfy.samplers.KSampler.SCHEDULERS
         return {
             "required": {
                 "model": ("MODEL",),
@@ -112,37 +47,37 @@ class HolafKSampler:
                 "negative": ("CONDITIONING",),
                 "vae": ("VAE",),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                # "control_after_generate": (["fixed", "increment", "decrement", "randomize"], {"default": "randomize"}), # Removed duplicate
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                 "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
-                "sampler_name": (samplers,),
-                "scheduler": (schedulers,),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
                 "denoise": ("FLOAT", {"default": 1.00, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "input_type": (["latent", "image"], {"default": "latent"}),
-                # Removed tiling inputs
-                # "max_tile_size": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                # "overlap_size": ("INT", {"default": 128, "min": 0, "max": 8192, "step": 8}),
+                "clean_vram": ("BOOLEAN", {"default": False}),
             },
             "optional": {
-                 "latent_image": ("LATENT",), # Optional now, required if input_type is latent
-                 "image": ("IMAGE",),       # Optional now, required if input_type is image
+                 "latent_image": ("LATENT",),
+                 "image": ("IMAGE",),
             }
         }
 
     RETURN_TYPES = ("MODEL", "CONDITIONING", "CONDITIONING", "VAE", "LATENT", "IMAGE")
     RETURN_NAMES = ("model", "positive", "negative", "vae", "latent", "image")
-    FUNCTION = "sample" # Renamed function
+    FUNCTION = "sample"
     CATEGORY = "Holaf"
 
-    # Removed calculate_tile_params function
-
-    # Renamed function and removed tiling parameters
-    def sample(self, model: ModelPatcher, positive, negative, vae,
+    def sample(self, model, positive, negative, vae,
                      seed, steps, cfg, sampler_name, scheduler, denoise,
-                     input_type, # Removed max_tile_size, overlap_size
+                     input_type, clean_vram,
                      latent_image=None, image=None):
+        """
+        Executes the sampling process, handling input type, device placement, and VRAM.
+        """
+        # Optionally clear VRAM to free up memory before the main operation.
+        if clean_vram:
+            comfy.model_management.soft_empty_cache()
 
-        # --- Input Validation ---
+        # --- Input Preparation ---
         if input_type == "latent":
             if latent_image is None:
                 raise ValueError("Input type is 'latent', but no latent_image provided.")
@@ -150,85 +85,62 @@ class HolafKSampler:
         elif input_type == "image":
             if image is None:
                 raise ValueError("Input type is 'image', but no image provided.")
-            # Perform encoding
-            if hasattr(vae, 'encode_pil_to_latent'):
-                 encoded_output = vae.encode_pil_to_latent(image)
-            else:
-                 encoded_output = vae.encode(image[:,:,:,:3]) # Assuming image is BCHW, take RGB
-
-            # Check if encode already returned a dict or just the tensor
+            # Encode the input image into latent space using the provided VAE.
+            encoded_output = vae.encode(image[:,:,:,:3])
+            # Handle different VAE encode return types.
             if isinstance(encoded_output, dict) and "samples" in encoded_output:
-                latent = encoded_output # Use the dict directly
+                latent = encoded_output
             elif torch.is_tensor(encoded_output):
-                latent = {"samples": encoded_output} # Wrap tensor in dict
+                latent = {"samples": encoded_output}
             else:
                 raise TypeError(f"VAE encode returned unexpected type: {type(encoded_output)}")
         else:
             raise ValueError(f"Unknown input_type: {input_type}")
 
-        if "samples" not in latent:
-             raise TypeError("Latent input is not a dictionary with 'samples' key.")
+        if "samples" not in latent or not torch.is_tensor(latent["samples"]):
+             raise TypeError("Latent input is not a dictionary with a valid 'samples' tensor.")
 
-        # Ensure the 'samples' value is actually a tensor before proceeding
-        if not torch.is_tensor(latent["samples"]):
-            raise TypeError(f"Latent['samples'] is not a tensor, but type: {type(latent['samples'])}")
+        # --- Device Placement ---
+        device = model.load_device
+        latent_samples = latent["samples"].to(device)
+        noise = comfy.sample.prepare_noise(latent_samples, seed, None).to(device)
+        # Create safe, device-specific copies of conditioning.
+        positive_copy = prepare_cond_for_tile(positive, device)
+        negative_copy = prepare_cond_for_tile(negative, device)
 
-        latent_samples = latent["samples"] # Now we are sure it's a tensor
-        device = model.load_device # Get the target device from the model
-        latent_samples = latent_samples.to(device) # Move the input latent to the correct device
-
-        # Prepare noise on the correct device
-        noise = comfy.sample.prepare_noise(latent_samples, seed, None).to(device) # Use batch_idx=None for now
-
-        # Prepare conditioning on the correct device
-        positive_copy = prepare_cond_for_tile(positive, device) # Use the helper, name is okay
-        negative_copy = prepare_cond_for_tile(negative, device) # Use the helper, name is okay
-
-        # Clone the model
+        # Clone the model to prevent in-place modifications to the original model patcher.
         model_copy = model.clone()
 
-        # --- Define Preview Callback ---
-        preview_every_n_steps = 1 # Or adjust for performance
+        # --- Sampling ---
         pbar = comfy.utils.ProgressBar(steps)
-        server_instance = server.PromptServer.instance
-
         def preview_callback(step, x0, x, total_steps):
-            # Update progress bar
             pbar.update(1)
-            # Only update the progress bar in the callback
-            # Removed all image decoding, processing, and sending logic
 
-
-        # --- Perform Standard Sampling ---
-        # Use the prepared noise, conditioning, and latent samples directly
+        # Execute the core comfy sampler.
         sampled_output = comfy.sample.sample(model_copy, noise, steps, cfg, sampler_name, scheduler,
-                                             positive_copy, negative_copy, latent_samples, # Use prepared inputs
+                                             positive_copy, negative_copy, latent_samples,
                                              denoise=denoise, disable_noise=False, start_step=None,
                                              last_step=None, force_full_denoise=False, noise_mask=None,
-                                             callback=preview_callback, disable_pbar=True, seed=seed) # Pass callback, disable default pbar
+                                             callback=preview_callback, disable_pbar=True, seed=seed)
 
-        # --- Handle Output ---
+        # --- Output Handling ---
+        # Extract the final latent tensor from the sampler's output.
         if torch.is_tensor(sampled_output):
             final_latent_samples = sampled_output
-        elif isinstance(sampled_output, dict) and "samples" in sampled_output and torch.is_tensor(sampled_output["samples"]):
+        elif isinstance(sampled_output, dict) and "samples" in sampled_output:
             final_latent_samples = sampled_output["samples"]
         else:
-            raise TypeError(f"comfy.sample.sample did not return a tensor or a dict with a 'samples' tensor, but {type(sampled_output)}")
+            raise TypeError(f"comfy.sample.sample returned an unexpected type: {type(sampled_output)}")
 
         final_latent_samples = final_latent_samples.to(comfy.model_management.intermediate_device())
-
-        # --- Decode Final Latent ---
         final_latent = {"samples": final_latent_samples}
+
+        # Decode the resulting latent into a pixel-space image.
         image_out = vae.decode(final_latent["samples"])
         image_out = image_out.to(comfy.model_management.intermediate_device())
 
-        # --- Return Outputs ---
-        # Ensure latent is on CPU if it's an output
+        # Move the final latent to CPU for output to conserve VRAM.
         final_latent["samples"] = final_latent["samples"].cpu()
 
-        # Pass through other inputs/outputs
-        # Order: model, positive, negative, vae, latent, image
+        # Pass through the original inputs for chaining.
         return (model, positive, negative, vae, final_latent, image_out)
-
-# Note: NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS
-# will be updated in __init__.py later.

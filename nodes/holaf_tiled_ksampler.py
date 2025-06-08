@@ -1,108 +1,37 @@
-# === Documentation ===
-# Author: Cline (AI Assistant)
-# Date: 2025-04-01
-#
-# Purpose:
-# This file defines the 'HolafTiledKSampler' custom node for ComfyUI.
-# It implements a KSampler that processes large images or latents by dividing
-# them into smaller, overlapping tiles. This allows generating high-resolution
-# images that might otherwise exceed available GPU memory limits. The node
-# samples each tile individually and then blends them back together.
-#
-# Design Choices & Rationale:
-# - Tiling Strategy: Addresses memory limitations by breaking the sampling
-#   process into manageable chunks (tiles) based on `max_tile_size`.
-# - Overlap & Blending: Uses a specified `overlap_size` between tiles. A linear
-#   feathering mask (`tile_feather_mask`) is generated based on this overlap.
-#   During recombination, the output of each tile is multiplied by this mask,
-#   and the results are accumulated. A corresponding `blend_mask` tracks the
-#   sum of feather mask contributions. The final latent is obtained by dividing
-#   the accumulated output by the blend mask, effectively averaging the results
-#   in the overlapping regions for a smoother transition.
-# - Tile Parameter Calculation: Includes an internal `calculate_tile_params` method
-#   (similar logic to `HolafTileCalculator`) to determine the number of slices
-#   and the precise tile dimensions (in pixels and latent space). It ensures
-#   tile dimensions and overlap are divisible by 8 (important for latent space
-#   operations) and recalculates slice counts if adjustments are needed.
-# - Device Management: Manages tensor placement. Input latent and noise are moved
-#   to the model's device. The `prepare_cond_for_tile` helper is used within the
-#   loop to create deep copies of conditioning and move tensors to the device
-#   *for each tile's sampling call*. The final blended latent and decoded image
-#   are moved to an intermediate device.
-# - Model Cloning: The diffusion model (`model`) is cloned *once* before the
-#   tiling loop starts. This ensures that the same model state (apart from
-#   internal sampler state changes) is used for all tiles, promoting consistency.
-# - Core Sampler Integration: Leverages the standard `comfy.sample.sample`
-#   function to perform the actual diffusion process for each individual tile.
-# - Conditioning Handling: Applies the *full* positive and negative conditioning
-#   context to the sampling of each tile. An option for sliced conditioning
-#   appears to have been removed.
-# - Input Flexibility: Accepts either a 'latent' or an 'image' as input, encoding
-#   the image using the provided VAE if necessary.
-# - Seed Handling: Currently uses the main input `seed` for all tiles. Logic for
-#   incrementing or randomizing seeds per tile seems to have been removed.
-# === End Documentation ===
-
 import torch
 import math
 import numpy as np
-# from tqdm import tqdm # Removed unused import
-import copy # Re-add copy for deepcopy
-
+import copy
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
 from comfy.model_patcher import ModelPatcher
 
-# Tensor related imports might be needed later
-# from comfy.ldm.modules.diffusionmodules.util import make_ddim_sampling_parameters, make_ddim_timesteps, noise_like
-
 def prepare_cond_for_tile(original_cond_list, device):
     """
-    Creates a deep copy of the conditioning list for a tile and moves tensors within the copy to the specified device.
-    Returns the new list structure.
+    Deep copies a conditioning list and moves its tensors to the specified device.
+    This is vital for tiled sampling to ensure each tile's sampling process
+    is isolated and uses a fresh copy of the conditioning data.
     """
     if not isinstance(original_cond_list, list):
-        # print(f"Warning: Conditioning input is not a list, but type {type(original_cond_list)}. Returning empty list.")
-        return [] # Return empty list if not a list
+        return []
 
     cond_list_copy = copy.deepcopy(original_cond_list)
     for i, item in enumerate(cond_list_copy):
         if isinstance(item, (list, tuple)) and len(item) >= 1 and torch.is_tensor(item[0]):
-            # Standard format: [tensor, {dict}] - move tensor in the copy
             if item[0].device != device:
-                try:
-                    cond_list_copy[i][0] = item[0].to(device)
-                except Exception as e:
-                    print(f"Error moving tensor to device {device}: {e}")
-            # Ensure the dict exists if only tensor was present in original
+                cond_list_copy[i][0] = item[0].to(device)
             if len(item) == 1:
                  cond_list_copy[i].append({})
-            elif not isinstance(item[1], dict): # Ensure second element is a dict if tensor exists
-                 print(f"Warning: Conditioning item format issue. Expected dict as second element, got {type(item[1])}. Replacing with empty dict.")
-                 cond_list_copy[i] = [cond_list_copy[i][0], {}]
-
         elif torch.is_tensor(item):
-            # Handle cases where the list might just contain tensors - move tensor in the copy
-            tensor_on_device = item
-            if item.device != device:
-                 try:
-                     tensor_on_device = item.to(device)
-                 except Exception as e:
-                     print(f"Error moving tensor to device {device}: {e}")
-            # Replace the tensor with the standard [tensor, {}] format in the copy
+            tensor_on_device = item.to(device) if item.device != device else item
             cond_list_copy[i] = [tensor_on_device, {}]
-        # Ignore other formats (already copied by deepcopy)
-
     return cond_list_copy
 
 
 class HolafTiledKSampler:
     @classmethod
     def INPUT_TYPES(s):
-        # Get available sampler and scheduler names from ComfyUI
-        samplers = comfy.samplers.KSampler.SAMPLERS
-        schedulers = comfy.samplers.KSampler.SCHEDULERS
         return {
             "required": {
                 "model": ("MODEL",),
@@ -110,21 +39,21 @@ class HolafTiledKSampler:
                 "negative": ("CONDITIONING",),
                 "vae": ("VAE",),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                # "control_after_generate": (["fixed", "increment", "decrement", "randomize"], {"default": "randomize"}), # Removed duplicate
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                 "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
-                "sampler_name": (samplers,),
-                "scheduler": (schedulers,),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
                 "denoise": ("FLOAT", {"default": 1.00, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "input_type": (["latent", "image"], {"default": "latent"}),
+                # The max dimension of a tile, should align with the model's native resolution (e.g., 1024 for SDXL).
                 "max_tile_size": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
+                # Pixel overlap between adjacent tiles to ensure seamless blending.
                 "overlap_size": ("INT", {"default": 128, "min": 0, "max": 8192, "step": 8}),
-                # "batch_size": ("INT", {"default": 1, "min": 1, "max": 4096}), # Removed batch size as tiling implies batch=1
-                # "use_sliced_conditioning": ("BOOLEAN", {"default": True}), # Removed this option
+                "clean_vram": ("BOOLEAN", {"default": False}),
             },
             "optional": {
-                 "latent_image": ("LATENT",), # Optional now, required if input_type is latent
-                 "image": ("IMAGE",),       # Optional now, required if input_type is image
+                 "latent_image": ("LATENT",),
+                 "image": ("IMAGE",),
             }
         }
 
@@ -135,142 +64,84 @@ class HolafTiledKSampler:
 
     def calculate_tile_params(self, pixel_w, pixel_h, max_tile_size, overlap_size):
         """
-        Calculates tile parameters based on pixel dimensions.
-        Adapted from HolafTileCalculator.
-        Returns: x_slices, y_slices, tile_w_pixel, tile_h_pixel
+        Calculates tile grid parameters. The key step here is ensuring all final
+        dimensions (tile size, overlap) are divisible by 8, which is required for
+        compatibility with the VAE's latent space (8x compression factor).
         """
-        # Clamp overlap to be less than max_tile_size
         overlap_size = min(overlap_size, max_tile_size - 8) if max_tile_size > 8 else 0
+        tile_w_init = min(pixel_w, max_tile_size)
+        tile_h_init = min(pixel_h, max_tile_size)
+        step_w = tile_w_init - overlap_size
+        step_h = tile_h_init - overlap_size
 
-        tile_w = min(pixel_w, max_tile_size)
-        tile_h = min(pixel_h, max_tile_size)
+        x_slices = 1 if tile_w_init >= pixel_w or step_w <= 0 else 1 + math.ceil((pixel_w - tile_w_init) / step_w)
+        y_slices = 1 if tile_h_init >= pixel_h or step_h <= 0 else 1 + math.ceil((pixel_h - tile_h_init) / step_h)
 
-        step_w = tile_w - overlap_size
-        step_h = tile_h - overlap_size
-
-        x_slices = 1 if tile_w >= pixel_w or step_w <= 0 else 1 + math.ceil((pixel_w - tile_w) / step_w)
-        y_slices = 1 if tile_h >= pixel_h or step_h <= 0 else 1 + math.ceil((pixel_h - tile_h) / step_h)
-
-        # Calculate the precise tile size needed for a potentially better fit
-        # D = (A + (N - 1) * C) / N
         final_tile_w = pixel_w if x_slices == 1 else math.ceil((pixel_w + (x_slices - 1) * overlap_size) / float(x_slices))
         final_tile_h = pixel_h if y_slices == 1 else math.ceil((pixel_h + (y_slices - 1) * overlap_size) / float(y_slices))
 
-        # Ensure tile dimensions are divisible by 8 for latent conversion
+        # Ensure final dimensions and overlap are divisible by 8 for latent space compatibility.
         final_tile_w = math.ceil(final_tile_w / 8.0) * 8
         final_tile_h = math.ceil(final_tile_h / 8.0) * 8
-        overlap_size = math.ceil(overlap_size / 8.0) * 8 # Also ensure overlap is divisible by 8
+        overlap_size = math.ceil(overlap_size / 8.0) * 8
 
-        # Recalculate slices based on adjusted tile sizes if necessary (though the ceil should handle it)
-        step_w = final_tile_w - overlap_size
-        step_h = final_tile_h - overlap_size
-        x_slices = 1 if final_tile_w >= pixel_w or step_w <= 0 else 1 + math.ceil((pixel_w - final_tile_w) / step_w)
-        y_slices = 1 if final_tile_h >= pixel_h or step_h <= 0 else 1 + math.ceil((pixel_h - final_tile_h) / step_h)
+        # Recalculate slice counts based on the adjusted, rounded tile sizes.
+        step_w_final = final_tile_w - overlap_size
+        step_h_final = final_tile_h - overlap_size
+        x_slices = 1 if final_tile_w >= pixel_w or step_w_final <= 0 else 1 + math.ceil((pixel_w - final_tile_w) / step_w_final)
+        y_slices = 1 if final_tile_h >= pixel_h or step_h_final <= 0 else 1 + math.ceil((pixel_h - final_tile_h) / step_h_final)
 
         return int(x_slices), int(y_slices), int(final_tile_w), int(final_tile_h), int(overlap_size)
 
-
     def sample_tiled(self, model: ModelPatcher, positive, negative, vae,
-                     seed, steps, cfg, sampler_name, scheduler, denoise, # Removed control_after_generate
-                     input_type, max_tile_size, overlap_size, # Removed batch_size and use_sliced_conditioning
+                     seed, steps, cfg, sampler_name, scheduler, denoise,
+                     input_type, max_tile_size, overlap_size, clean_vram,
                      latent_image=None, image=None):
+        if clean_vram:
+            comfy.model_management.soft_empty_cache()
 
-        # --- Input Validation ---
+        # --- Input Preparation ---
         if input_type == "latent":
-            if latent_image is None:
-                raise ValueError("Input type is 'latent', but no latent_image provided.")
+            if latent_image is None: raise ValueError("Input type is 'latent', but no latent_image provided.")
             latent = latent_image
         elif input_type == "image":
-            if image is None:
-                raise ValueError("Input type is 'image', but no image provided.")
-            if image is None:
-                raise ValueError("Input type is 'image', but no image provided.")
-            # Perform encoding
-            if hasattr(vae, 'encode_pil_to_latent'):
-                 encoded_output = vae.encode_pil_to_latent(image)
-            else:
-                 encoded_output = vae.encode(image[:,:,:,:3]) # Assuming image is BCHW, take RGB
+            if image is None: raise ValueError("Input type is 'image', but no image provided.")
+            encoded_output = vae.encode(image[:,:,:,:3])
+            latent = {"samples": encoded_output} if torch.is_tensor(encoded_output) else encoded_output
+        else: raise ValueError(f"Unknown input_type: {input_type}")
 
-            # Check if encode already returned a dict or just the tensor
-            if isinstance(encoded_output, dict) and "samples" in encoded_output:
-                latent = encoded_output # Use the dict directly
-            elif torch.is_tensor(encoded_output):
-                latent = {"samples": encoded_output} # Wrap tensor in dict
-            else:
-                raise TypeError(f"VAE encode returned unexpected type: {type(encoded_output)}")
-        else:
-            raise ValueError(f"Unknown input_type: {input_type}")
+        if "samples" not in latent or not torch.is_tensor(latent["samples"]):
+             raise TypeError("Latent input is not a dictionary with a valid 'samples' tensor.")
 
-        if "samples" not in latent:
-             raise TypeError("Latent input is not a dictionary with 'samples' key.")
-
-        # Ensure the 'samples' value is actually a tensor before proceeding
-        if not torch.is_tensor(latent["samples"]):
-            raise TypeError(f"Latent['samples'] is not a tensor, but type: {type(latent['samples'])}")
-
-        latent_samples = latent["samples"] # Now we are sure it's a tensor
-        device = model.load_device # Get the target device from the model
-        latent_samples = latent_samples.to(device) # Move the input latent to the correct device
-
-        # Prepare noise on the correct device
-        noise = comfy.sample.prepare_noise(latent_samples, seed, None).to(device) # Use batch_idx=None for now
-
-        # Conditioning lists (positive, negative) will be deep-copied inside the loop
-
-        # Clone the model ONCE before the loop to prevent potential modifications
+        latent_samples = latent["samples"]
+        device = model.load_device
+        latent_samples = latent_samples.to(device)
+        noise = comfy.sample.prepare_noise(latent_samples, seed, None).to(device)
         model_copy = model.clone()
 
-        # --- Get Dimensions ---
-        batch_size_latent, channels, height_latent, width_latent = latent_samples.shape
-        height_pixel = height_latent * 8
-        width_pixel = width_latent * 8
-
-        print(f"Input dimensions: {width_pixel}x{height_pixel} pixels ({width_latent}x{height_latent} latent)")
-
-        # --- Calculate Tile Parameters ---
+        # --- Tiling Calculation ---
+        height_latent, width_latent = latent_samples.shape[2], latent_samples.shape[3]
+        height_pixel, width_pixel = height_latent * 8, width_latent * 8
         x_slices, y_slices, tile_w_pixel, tile_h_pixel, overlap_pixel = self.calculate_tile_params(
-            width_pixel, height_pixel, max_tile_size, overlap_size
-        )
-        tile_w_latent = tile_w_pixel // 8
-        tile_h_latent = tile_h_pixel // 8
-        overlap_latent = overlap_pixel // 8
+            width_pixel, height_pixel, max_tile_size, overlap_size)
+        tile_w_latent, tile_h_latent, overlap_latent = tile_w_pixel // 8, tile_h_pixel // 8, overlap_pixel // 8
 
-        print(f"Tiling: {x_slices}x{y_slices} slices, Tile Size: {tile_w_pixel}x{tile_h_pixel}px ({tile_w_latent}x{tile_h_latent} latent), Overlap: {overlap_pixel}px ({overlap_latent} latent)")
-
-        # --- Prepare Output Tensor and Blending Mask ---
+        # --- Blending Mask Preparation ---
+        # A feathering mask is used for smooth blending. It has a value of 1.0 in the
+        # center and linearly fades to 0 at the edges of the overlap area.
         output_latent = torch.zeros_like(latent_samples)
-        blend_mask = torch.zeros_like(latent_samples) # Tracks contribution count for averaging
-
-        # Create a linear feathering mask for blending overlaps
-        feather_margin = overlap_latent
+        blend_mask = torch.zeros_like(latent_samples)
         feather_mask_x = torch.ones((1, 1, 1, tile_w_latent), device=device)
         feather_mask_y = torch.ones((1, 1, tile_h_latent, 1), device=device)
 
         if overlap_latent > 0:
-            # Clamp the effective margin to avoid indexing errors if overlap > tile dimension
-            effective_margin_x = min(feather_margin, tile_w_latent)
-            effective_margin_y = min(feather_margin, tile_h_latent)
-
-            # Linear ramp from 0 to 1 over the overlap margin
-            # Apply to X mask (width)
-            for i in range(effective_margin_x): # Iterate up to tile_w_latent (exclusive)
-                # Ensure weight calculation uses the original feather_margin if possible,
-                # but prevent division by zero if feather_margin is 0 (already handled by if overlap_latent > 0)
-                weight = (i + 1) / float(feather_margin + 1)
-                if i < tile_w_latent: # Check bounds for safety
-                    feather_mask_x[..., i] = min(feather_mask_x[..., i], weight) # Left edge
-                if -(i + 1) >= -tile_w_latent: # Check bounds for safety
-                    feather_mask_x[..., -(i + 1)] = min(feather_mask_x[..., -(i + 1)], weight) # Right edge
-
-            # Apply to Y mask (height)
-            for i in range(effective_margin_y): # Iterate up to tile_h_latent (exclusive)
-                weight = (i + 1) / float(feather_margin + 1)
-                if i < tile_h_latent: # Check bounds for safety
-                    feather_mask_y[..., i, :] = min(feather_mask_y[..., i, :], weight) # Top edge
-                if -(i + 1) >= -tile_h_latent: # Check bounds for safety
-                    feather_mask_y[..., -(i + 1), :] = min(feather_mask_y[..., -(i + 1), :], weight) # Bottom edge
-
-        tile_feather_mask = feather_mask_y * feather_mask_x # Combine X and Y masks
+            for i in range(overlap_latent):
+                weight = (i + 1) / float(overlap_latent + 1)
+                feather_mask_x[..., i] = weight
+                feather_mask_x[..., -(i + 1)] = weight
+                feather_mask_y[..., i, :] = weight
+                feather_mask_y[..., -(i + 1), :] = weight
+        tile_feather_mask = feather_mask_y * feather_mask_x
 
         # --- Tiling Loop ---
         pbar = comfy.utils.ProgressBar(x_slices * y_slices)
@@ -279,100 +150,40 @@ class HolafTiledKSampler:
 
         for y in range(y_slices):
             for x in range(x_slices):
-                # Calculate tile boundaries
-                y_start_latent = y * step_y_latent
-                x_start_latent = x * step_x_latent
+                # Calculate coordinates for the current tile, handling edge cases.
+                y_start = y * step_y_latent
+                x_start = x * step_x_latent
+                if y_start + tile_h_latent > height_latent: y_start = height_latent - tile_h_latent
+                if x_start + tile_w_latent > width_latent: x_start = width_latent - tile_w_latent
+                y_end, x_end = y_start + tile_h_latent, x_start + tile_w_latent
 
-                # Ensure tile doesn't go out of bounds (adjust start for last tiles)
-                if y_start_latent + tile_h_latent > height_latent:
-                    y_start_latent = height_latent - tile_h_latent
-                if x_start_latent + tile_w_latent > width_latent:
-                    x_start_latent = width_latent - tile_w_latent
-
-                y_end_latent = y_start_latent + tile_h_latent
-                x_end_latent = x_start_latent + tile_w_latent
-
-                print(f"  Processing tile ({y+1}/{y_slices}, {x+1}/{x_slices}): Latent Region [{y_start_latent}:{y_end_latent}, {x_start_latent}:{x_end_latent}]")
-
-                # Extract TILE latent tensor slice (already on device)
-                tile_latent_tensor = latent_samples[:, :, y_start_latent:y_end_latent, x_start_latent:x_end_latent]
-
-                # Extract TILE noise tensor slice (already on device)
-                tile_noise = noise[:, :, y_start_latent:y_end_latent, x_start_latent:x_end_latent]
-
-                # Deep copy conditioning lists for this specific tile call and ensure tensors are on device
+                # Extract the portions of the latent and noise for this tile.
+                tile_latent = latent_samples[:, :, y_start:y_end, x_start:x_end]
+                tile_noise = noise[:, :, y_start:y_end, x_start:x_end]
                 tile_positive = prepare_cond_for_tile(positive, device)
                 tile_negative = prepare_cond_for_tile(negative, device)
 
-                # Removed the check for use_sliced_conditioning as the option is removed.
-                # The code now always uses the full conditioning for each tile.
-
-                # --- Perform Sampling on Tile ---
-                # Note: We might need to adjust seed per tile if desired, or use the main seed
-                # The control_after_generate logic was tied to the removed input, so it's commented out/removed.
-                # If seed control per tile is needed, it should be re-implemented based on a valid input.
-                tile_seed = seed # Use the main seed for all tiles for now
-                # if control_after_generate == 'increment':
-                #     seed += 1
-                # elif control_after_generate == 'decrement':
-                #     seed -= 1
-                # elif control_after_generate == 'randomize':
-                #     seed = np.random.randint(0, 0x7fffffffffffffff)
-
-
-                # tile_noise is already on the device from the prepare_noise call + .to(device)
-                # tile_positive and tile_negative are fresh deep copies for this tile
-
-                # Pass the CLONED model, TILE noise slice, COPIED conditioning lists, and the TILE LATENT TENSOR itself to comfy.sample.sample
-                sampled_output = comfy.sample.sample(model_copy, tile_noise, steps, cfg, sampler_name, scheduler, # Use CLONED model, TILE noise
-                                                     tile_positive, tile_negative, tile_latent_tensor, # Pass COPIED cond, TILE latent tensor
-                                                     denoise=denoise, disable_noise=False, start_step=None,
-                                                     last_step=None, force_full_denoise=False, noise_mask=None,
-                                                     callback=None, disable_pbar=True, seed=tile_seed) # Disable inner pbar
-
-                # --- Blend Tile into Output ---
-                # Handle output (might be tensor or dict) and apply feather mask
-                if torch.is_tensor(sampled_output):
-                    sampled_tile_tensor = sampled_output
-                elif isinstance(sampled_output, dict) and "samples" in sampled_output and torch.is_tensor(sampled_output["samples"]):
-                    sampled_tile_tensor = sampled_output["samples"]
-                else: # Corrected indentation
-                    raise TypeError(f"comfy.sample.sample did not return a tensor or a dict with a 'samples' tensor, but {type(sampled_output)}") # Corrected indentation
-
-                # Ensure the sampled tensor is on the correct device before multiplying with the mask
-                sampled_tile_tensor = sampled_tile_tensor.to(device)
-                feathered_tile = sampled_tile_tensor * tile_feather_mask
-
-                # Add feathered tile tensor to the corresponding region in the output
-                output_latent[:, :, y_start_latent:y_end_latent, x_start_latent:x_end_latent] += feathered_tile
-                # Add the feather mask itself to the blend_mask to track contributions (Corrected Indentation)
-                blend_mask[:, :, y_start_latent:y_end_latent, x_start_latent:x_end_latent] += tile_feather_mask
-
+                # Sample the individual tile.
+                sampled_output = comfy.sample.sample(model_copy, tile_noise, steps, cfg, sampler_name, scheduler,
+                                                     tile_positive, tile_negative, tile_latent,
+                                                     denoise=denoise, disable_noise=False, callback=None,
+                                                     disable_pbar=True, seed=seed)
+                
+                sampled_tile = sampled_output if torch.is_tensor(sampled_output) else sampled_output["samples"]
+                
+                # Add the weighted result to the main output. Also accumulate the weights in the blend_mask.
+                output_latent[:, :, y_start:y_end, x_start:x_end] += sampled_tile.to(device) * tile_feather_mask
+                blend_mask[:, :, y_start:y_end, x_start:x_end] += tile_feather_mask
                 pbar.update(1)
 
-
-        # --- Finalize Output ---
-        # Avoid division by zero by clamping blend_mask where it's zero
-        blend_mask = torch.clamp(blend_mask, min=1e-6)
-        # Average the contributions in overlapping areas
-        final_latent_samples = output_latent / blend_mask
-        final_latent_samples = final_latent_samples.to(comfy.model_management.intermediate_device())
-
-        # --- Decode Final Latent ---
+        # --- Finalize and Decode ---
+        # Average the blended tiles by dividing the accumulated output by the accumulated
+        # blend mask. This normalizes the values in overlapping regions.
+        blend_mask = torch.clamp(blend_mask, min=1e-6) # Avoid division by zero.
+        final_latent_samples = (output_latent / blend_mask).to(comfy.model_management.intermediate_device())
+        
         final_latent = {"samples": final_latent_samples}
-        # VAE decode should handle device placement internally
-        # vae.to(model.load_device) # Removed this line causing AttributeError
-        image_out = vae.decode(final_latent["samples"])
-        image_out = image_out.to(comfy.model_management.intermediate_device())
-
-
-        # --- Return Outputs ---
-        # Ensure latent is on CPU if it's an output
+        image_out = vae.decode(final_latent["samples"]).to(comfy.model_management.intermediate_device())
         final_latent["samples"] = final_latent["samples"].cpu()
 
-        # Pass through other inputs/outputs
-        # Order: model, positive, negative, vae, latent, image
         return (model, positive, negative, vae, final_latent, image_out)
-
-# Note: NODE_CLASS_MAPPINGS and NODE_DISPLAY_NAME_MAPPINGS
-# will be updated in __init__.py later.

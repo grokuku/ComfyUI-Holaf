@@ -1,48 +1,15 @@
-# === Documentation ===
-# Author: Cline (AI Assistant)
-# Date: 2025-04-01
-#
-# Purpose:
-# This __init__.py file serves as the main entry point for the 'ComfyUI-Holaf'
-# custom node package. It is responsible for making the custom nodes defined
-# within this package discoverable and usable by the ComfyUI application.
-#
-# Design Choices & Rationale:
-# - Centralized Registration: Follows the standard ComfyUI pattern for custom
-#   node packages. ComfyUI looks for this file to understand what nodes the
-#   package provides.
-# - Modular Imports: Imports individual node classes (e.g., HolafTileCalculator,
-#   HolafSaveImage) from their respective files within the `./nodes/` subdirectory.
-#   This keeps the node implementations organized in separate files.
-# - NODE_CLASS_MAPPINGS: This dictionary is crucial for ComfyUI. It maps a unique
-#   internal string identifier (typically the class name) for each node to the
-#   actual Python class that implements the node's logic. ComfyUI uses this map
-#   to instantiate the correct node object when loading or running a workflow.
-# - NODE_DISPLAY_NAME_MAPPINGS: This dictionary maps the same internal string
-#   identifiers to user-friendly names that appear in the ComfyUI "Add Node" menu.
-#   This allows for more readable or descriptive names than the raw class names.
-# - WEB_DIRECTORY: Specifies the relative path to the directory containing
-#   associated web assets (JavaScript files in this case) needed for the frontend
-#   components of certain custom nodes (like HolafImageComparer). ComfyUI serves
-#   files from this directory.
-# - __all__ Export: Explicitly lists the mapping dictionaries (`NODE_CLASS_MAPPINGS`,
-#   `NODE_DISPLAY_NAME_MAPPINGS`, `WEB_DIRECTORY`) to be exported when the package is imported.
-#   This is standard Python practice and ensures ComfyUI can access these essential variables.
-# - Initialization Feedback: Includes a print statement to the console upon successful
-#   loading, providing visual confirmation that the custom node package has been
-#   recognized and initialized by ComfyUI.
-# === End Documentation ===
+"""
+This file is the main entry point for the ComfyUI-Holaf custom node package.
+It is responsible for discovering, importing, and registering all the custom nodes
+and their associated web assets (JavaScript files) with ComfyUI.
+"""
 
-# --- MODIFICATION : Import de 'server' et 'os' pour le chargement du JS ---
 import server
 import os
 import sys
 import hashlib
-# --- FIN MODIFICATION ---
 
-
-# Import classes from the nodes directory
-from .nodes.holaf_neurogrid_overload import HolafNeurogridOverload
+# Node class imports
 from .nodes.holaf_tile_calculator import HolafTileCalculator
 from .nodes.holaf_slice_calculator import HolafSliceCalculator
 from .nodes.holaf_save_image import HolafSaveImage
@@ -61,14 +28,12 @@ from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_applier import HolafLutApplier
 from .nodes.holaf_lut_loader import HolafLutLoader
 from .nodes.holaf_lut_saver import HolafLutSaver
-# --- MODIFICATION : Import de la nouvelle node interactive_image_editor ---
 from .nodes.holaf_interactive_image_editor import HolafInteractiveImageEditor
-# --- FIN MODIFICATION ---
 
 
-# Define node mappings for ComfyUI
+# Maps internal class names to the node's implementation.
+# ComfyUI uses this to instantiate the correct node class.
 NODE_CLASS_MAPPINGS = {
-    "HolafNeurogridOverload": HolafNeurogridOverload,
     "HolafTileCalculator": HolafTileCalculator,
     "HolafSliceCalculator": HolafSliceCalculator,
     "HolafSaveImage": HolafSaveImage,
@@ -87,14 +52,11 @@ NODE_CLASS_MAPPINGS = {
     "HolafLutApplier": HolafLutApplier,
     "HolafLutLoader": HolafLutLoader,
     "HolafLutSaver": HolafLutSaver,
-    # --- MODIFICATION : Ajout du mapping pour la nouvelle node ---
     "HolafInteractiveImageEditor": HolafInteractiveImageEditor,
-    # --- FIN MODIFICATION ---
 }
 
-# Define display name mappings
+# Maps internal class names to a user-friendly display name for the ComfyUI menu.
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "HolafNeurogridOverload": "Neurogrid Overload (Holaf)",
     "HolafTileCalculator": "Tile Calculator (Holaf)",
     "HolafSliceCalculator": "Slice Calculator (Holaf)",
     "HolafSaveImage": "Save Image (Holaf)",
@@ -113,48 +75,29 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafLutApplier": "LUT Applier (Holaf)",
     "HolafLutLoader": "LUT Loader (Holaf)",
     "HolafLutSaver": "LUT Saver (Holaf)",
-    # --- MODIFICATION : Ajout du nom d'affichage pour la nouvelle node ---
     "HolafInteractiveImageEditor": "Interactive Image Editor (Holaf)",
-    # --- FIN MODIFICATION ---
 }
 
-# --- MODIFICATION : Chargement dynamique et versionné des fichiers JS ---
+# --- Dynamic and Versioned JavaScript Loading ---
 
-# Obtenez le chemin absolu du dossier 'js' de ce custom node
+# Get the absolute path to the 'js' directory for this custom node.
 js_web_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "js")
-# Rendez le dossier 'js' accessible au serveur web de ComfyUI
-server.PromptServer.instance.add_extra_path("holaf", js_web_path)
 
-# Liste des fichiers JS que nous voulons charger
-javascript_files = [
-    "holaf_image_comparer.js",
-    "holaf_interactive_editor.js",
-    "holaf_lut_loader.js",
-    "holaf_neurogrid_overload.js"
-]
+# Make the 'js' directory accessible to the ComfyUI web server under the '/holaf' path.
+server.PromptServer.instance.app.router.add_static("/holaf", js_web_path)
 
-# Calcule un hash de tous les fichiers JS pour forcer le rechargement si l'un d'eux change
-m = hashlib.sha256()
-for js_file in javascript_files:
-    js_path = os.path.join(js_web_path, js_file)
-    if os.path.exists(js_path):
-        with open(js_path, 'rb') as f:
-            m.update(f.read())
+# <--- MODIFICATION --->
+# The entire block for dynamic JS loading with hashing and the `add_js_file` loop has been removed.
+# We will now rely on the `WEB_DIRECTORY` variable below, which is the standard and correct way.
+# ComfyUI will automatically look in the specified `WEB_DIRECTORY` for JS files
+# that match the Python node file names (e.g., holaf_image_comparer.py -> holaf_image_comparer.js).
+# <--- FIN MODIFICATION --->
 
-version_hash = m.hexdigest()[:8] # Un hash court pour la version
+# The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.
+WEB_DIRECTORY = "./js"
 
-# Enregistre chaque fichier JS avec le paramètre de version
-for js_file in javascript_files:
-     # La route pour le navigateur sera /holaf/nom_du_fichier.js?v=hash
-    server.PromptServer.instance.add_js_file(f"/holaf/{js_file}?v={version_hash}", __name__)
-
-# La variable WEB_DIRECTORY n'est plus nécessaire avec cette méthode
-WEB_DIRECTORY = "./js" # Gardons la pour la compatibilité, mais la méthode ci-dessus est prioritaire
-
-# --- FIN MODIFICATION ---
-
-# Indicate successful loading
+# Indicate successful loading in the console.
 print("✅ Holaf Custom Nodes initialized")
 
-# Export mappings for ComfyUI
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+# Export mappings for ComfyUI to use.
+__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']

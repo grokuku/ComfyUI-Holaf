@@ -1,50 +1,44 @@
-# === Documentation ===
-# Author: Cline (AI Assistant)
-# Date: 2025-04-23
-#
-# Purpose:
-# This file defines the 'HolafLutLoader' node. It provides a simple dropdown menu
-# to select a .cube LUT file from the 'ComfyUI/models/luts' directory and
-# load it for use in a workflow.
-#
-# How it works:
-# 1. Folder Registration: Ensures the 'luts' subfolder inside 'models' is
-#    recognized by ComfyUI.
-# 2. File Discovery: Uses ComfyUI's 'folder_paths.get_filename_list("luts")'
-#    to dynamically populate a dropdown menu with all available .cube files.
-# 3. Node Execution: When the node runs, it takes the selected filename from the
-#    dropdown, finds its full path, parses the .cube file, and outputs the
-#    data in the standard 'HOLAF_LUT_DATA' format.
-# === End Documentation ===
-
 import numpy as np
 import os
 import re
 import folder_paths
 
-# --- Folder Path Registration ---
-# This ensures ComfyUI knows about the 'luts' folder inside 'models'
+# --- LUTs Folder Registration ---
+# Add a dedicated 'luts' subfolder within the main 'models' directory for ComfyUI.
+# This makes it easy for users to organize their .cube files.
 luts_dir = os.path.join(folder_paths.models_dir, "luts")
 if not os.path.exists(luts_dir):
     os.makedirs(luts_dir)
-# This makes "luts" a valid category for folder_paths functions
+# Register this new path with ComfyUI's folder_paths system, allowing it
+# to be recognized and used by functions like get_filename_list().
 folder_paths.add_model_folder_path("luts", luts_dir)
 
 
 class HolafLutLoader:
+    """
+    Loads a .cube LUT file from the `ComfyUI/models/luts` directory.
+    It parses the file and provides the LUT data in a format ready for use
+    by the HolafLutApplier node.
+    """
     def __init__(self):
         pass
 
     @classmethod
     def INPUT_TYPES(s):
-        # Get a list of all files in the 'luts' directory
-        # This list will populate the dropdown menu in the UI.
-        lut_files = folder_paths.get_filename_list("luts")
-        
-        # Add a "None" option in case no file is desired.
+        """
+        Dynamically creates a dropdown menu in the UI populated with all
+        files found in the 'models/luts' directory.
+        """
+        try:
+            # Fetch the list of filenames from our registered 'luts' folder.
+            lut_files = folder_paths.get_filename_list("luts")
+        except:
+            lut_files = []
+            
+        # Provide a fallback "None" option if no LUTs are found.
         if not lut_files:
             print("Warning: No LUT files found in the 'models/luts' directory.")
-            lut_files = ["None"]
+            lut_files.append("None")
         
         return {
             "required": {
@@ -58,19 +52,19 @@ class HolafLutLoader:
     CATEGORY = "Holaf/LUT"
     
     def load_lut(self, lut_name: str):
-        # If the user selects "None" or if the list was empty.
+        """
+        Reads the selected .cube file, parses its contents, and returns the
+        data in the standard HOLAF_LUT_DATA dictionary format.
+        """
+        # Handle cases where no LUT is selected.
         if not lut_name or lut_name == "None":
-            # Return an empty but valid data structure to avoid errors downstream
-            print("[HolafLutLoader] No LUT selected. Passing empty data.")
+            # Return an empty but valid data structure to prevent errors in downstream nodes.
             return ({"lut": np.array([]), "size": 0, "title": "None"},)
 
-        # Get the full, absolute path to the selected LUT file
+        # Get the full, absolute path to the selected LUT file.
         lut_path = folder_paths.get_full_path("luts", lut_name)
-
         if not lut_path or not os.path.exists(lut_path):
-            raise FileNotFoundError(f"LUT file '{lut_name}' not found in the 'luts' directory.")
-        
-        print(f"[HolafLutLoader] Loading LUT from: {lut_path}")
+            raise FileNotFoundError(f"LUT file '{lut_name}' not found at path: {lut_path}")
         
         title, size, lut_data_flat = "", 0, []
         
@@ -78,25 +72,32 @@ class HolafLutLoader:
             with open(lut_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
                     line = line.strip()
-                    if not line or line.startswith('#'): continue
+                    # Skip empty lines and comments.
+                    if not line or line.startswith('#'):
+                        continue
                     
+                    # Parse metadata lines.
                     if line.startswith('TITLE'):
                         title = (re.findall(r'"([^"]*)"', line) or [""])[0]
                     elif line.startswith('LUT_3D_SIZE'):
                         size = int(line.split()[-1])
+                    # Once size is known, start reading RGB data points.
                     elif size > 0:
                         values = [float(v) for v in line.split()]
-                        if len(values) == 3: lut_data_flat.append(values)
+                        if len(values) == 3:
+                            lut_data_flat.append(values)
         except Exception as e:
             raise IOError(f"Error reading or parsing LUT file '{lut_name}': {e}")
         
+        # Validate that the file was parsed correctly.
         if size == 0 or len(lut_data_flat) != size ** 3:
-            raise ValueError(f"Failed to parse LUT '{lut_name}'. Check file format, size, and content.")
+            raise ValueError(f"Failed to parse LUT '{lut_name}'. Check format. Expected {size**3} data points, found {len(lut_data_flat)}.")
             
-        # Reshape the flat list of values into the 3D LUT cube
+        # Reshape the flat list of [R, G, B] values into a 3D LUT cube of shape (size, size, size, 3).
+        # This is the format required for the trilinear interpolation in the applier node.
         lut_np = np.array(lut_data_flat, dtype=np.float32).reshape(size, size, size, 3)
 
-        # Prepare the output data structure
+        # Package the data into the standard dictionary format.
         holaf_lut_data = {
             "lut": lut_np,
             "size": size,
