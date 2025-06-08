@@ -6,6 +6,8 @@
 # This file defines the 'HolafImageComparer' custom node for ComfyUI.
 # Its primary function is to provide a user interface element that allows
 # for the side-by-side comparison of two sets of images (image_a and image_b).
+# This version also acts as a passthrough node, making the input images
+# available as outputs.
 #
 # Design Choices & Rationale:
 # - Inheritance: Inherits from the standard ComfyUI 'PreviewImage' node.
@@ -18,10 +20,10 @@
 # - Processing: The 'compare_images' method utilizes the inherited 'save_images'
 #   function. It saves each input image set separately, likely using distinct
 #   filename prefixes ("a_", "b_") to differentiate them in the output directory.
-# - Output: Returns a dictionary structured specifically for the UI ({'ui': {'a_images': [...], 'b_images': [...]}}).
-#   This structure is designed to be consumed by a corresponding JavaScript
-#   frontend component (likely 'js/holaf_image_comparer.js') which renders
-#   the two image sets for comparison.
+# - Output: Returns a dictionary structured specifically for ComfyUI's execution model.
+#   - The 'ui' key contains data {'a_images': [...], 'b_images': [...]} for the JavaScript frontend.
+#   - The 'result' key contains a tuple with the passthrough images (image_a, image_b)
+#     for the node's output connectors.
 # - Helpers: Includes utility functions for naming (`get_name`), categorization (`get_category`),
 #   and colored logging (`log`) for potential debugging and organization, although
 #   `get_name` is bypassed for the main class name.
@@ -84,6 +86,11 @@ class HolafImageComparer(PreviewImage):
   CATEGORY = get_category() # Keep category helper for now
   FUNCTION = "compare_images"
 
+  # <--- MODIFICATION : DÉCLARATION DES SORTIES --->
+  RETURN_TYPES = ("IMAGE", "IMAGE",)
+  RETURN_NAMES = ("image_a", "image_b",)
+  # <--- FIN MODIFICATION --->
+
   @classmethod
   def INPUT_TYPES(cls):
     return {
@@ -98,8 +105,6 @@ class HolafImageComparer(PreviewImage):
       },
     }
 
-  # Keep RETURN_TYPES and RETURN_NAMES from PreviewImage (implicitly inherited)
-
   def compare_images(self,
                      image_a=None,
                      image_b=None,
@@ -108,17 +113,20 @@ class HolafImageComparer(PreviewImage):
                      extra_pnginfo=None):
 
     # Use the save_images method inherited from PreviewImage
-    result = { "ui": { "a_images":[], "b_images": [] } }
+    ui_data = { "a_images":[], "b_images": [] }
     if image_a is not None and len(image_a) > 0:
       # Assuming save_images returns a dict like {'ui': {'images': [...]}}
       saved_a = self.save_images(image_a, filename_prefix + "a_", prompt, extra_pnginfo)
-      result['ui']['a_images'] = saved_a.get('ui', {}).get('images', [])
+      ui_data['a_images'] = saved_a.get('ui', {}).get('images', [])
 
     if image_b is not None and len(image_b) > 0:
       saved_b = self.save_images(image_b, filename_prefix + "b_", prompt, extra_pnginfo)
-      result['ui']['b_images'] = saved_b.get('ui', {}).get('images', [])
-
-    return result
+      ui_data['b_images'] = saved_b.get('ui', {}).get('images', [])
+      
+    # <--- MODIFICATION : NOUVELLE STRUCTURE DE RETOUR --->
+    # Return a dictionary with 'ui' for the frontend and 'result' for the node outputs.
+    return { "ui": ui_data, "result": (image_a, image_b) }
+    # <--- FIN MODIFICATION --->
 
 # --- Export Mapping ---
 # This mapping will be imported by __init__.py

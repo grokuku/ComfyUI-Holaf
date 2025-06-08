@@ -5,7 +5,8 @@
 # Purpose:
 # This file defines the 'HolafColorMatcher' custom node for ComfyUI.
 # It transfers the color characteristics (luminance, contrast, saturation, and overall color balance)
-# from a reference image to a source image.
+# from a reference image to a source image. It also passes through the reference image
+# as an output for easier workflow chaining.
 #
 # Design Choices & Rationale:
 # - Modular Effects: The matching process is broken down into four distinct components:
@@ -60,8 +61,11 @@ class HolafColorMatcher:
             }
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("modified_image",)
+    # <--- MODIFICATION : DÉCLARATION DE LA NOUVELLE SORTIE --->
+    RETURN_TYPES = ("IMAGE", "IMAGE",)
+    RETURN_NAMES = ("modified_image", "reference_image",)
+    # <--- FIN MODIFICATION --->
+    
     FUNCTION = "apply_color_match"
     CATEGORY = "Holaf"
 
@@ -150,9 +154,15 @@ class HolafColorMatcher:
 
         # Handle batch size differences
         if batch_size_img > batch_size_ref:
-            reference_image = reference_image.repeat(batch_size_img // batch_size_ref, 1, 1, 1)
+            reference_image_b = reference_image.repeat(batch_size_img // batch_size_ref, 1, 1, 1)
+            image_b = image
         elif batch_size_ref > batch_size_img:
-            image = image.repeat(batch_size_ref // batch_size_img, 1, 1, 1)
+            image_b = image.repeat(batch_size_ref // batch_size_img, 1, 1, 1)
+            reference_image_b = reference_image
+        else:
+            image_b = image
+            reference_image_b = reference_image
+
 
         batch_size = max(batch_size_img, batch_size_ref)
         
@@ -162,8 +172,8 @@ class HolafColorMatcher:
         output_images = []
 
         for i in range(batch_size):
-            source_pil = self.tensor_to_pil(image[i]).convert("RGB")
-            ref_pil = self.tensor_to_pil(reference_image[i]).convert("RGB")
+            source_pil = self.tensor_to_pil(image_b[i]).convert("RGB")
+            ref_pil = self.tensor_to_pil(reference_image_b[i]).convert("RGB")
 
             modified_pil = source_pil.copy()
 
@@ -219,4 +229,7 @@ class HolafColorMatcher:
             output_images.append(self.pil_to_tensor(modified_pil))
             
         final_tensor = torch.cat(output_images, dim=0)
-        return (final_tensor,)
+        
+        # <--- MODIFICATION : AJOUT DE L'IMAGE DE RÉFÉRENCE À LA SORTIE --->
+        return (final_tensor, reference_image,)
+        # <--- FIN MODIFICATION --->
