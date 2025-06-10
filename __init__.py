@@ -29,6 +29,7 @@ from .nodes.holaf_lut_applier import HolafLutApplier
 from .nodes.holaf_lut_loader import HolafLutLoader
 from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_interactive_image_editor import HolafInteractiveImageEditor
+from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 
 
 # Maps internal class names to the node's implementation.
@@ -53,6 +54,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafLutLoader": HolafLutLoader,
     "HolafLutSaver": HolafLutSaver,
     "HolafInteractiveImageEditor": HolafInteractiveImageEditor,
+    "HolafMaskToBoolean": HolafMaskToBoolean,
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
@@ -76,6 +78,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafLutLoader": "LUT Loader (Holaf)",
     "HolafLutSaver": "LUT Saver (Holaf)",
     "HolafInteractiveImageEditor": "Interactive Image Editor (Holaf)",
+    "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
 }
 
 # --- Dynamic and Versioned JavaScript Loading ---

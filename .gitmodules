@@ -1,3 +1,0 @@
-[submodule "nodes/libs/nodes/libs/color_matcher"]
-	path = nodes/libs/nodes/libs/color_matcher
-	url = https://github.com/hahnec/color-matcher.git

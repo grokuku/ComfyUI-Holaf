@@ -8,7 +8,7 @@
 # pip install -r requirements.txt
 #
 # Alternatively, you can install them individually:
-# pip install numpy Pillow spandrel pandas matplotlib psutil
+# pip install numpy Pillow spandrel pandas matplotlib psutil imageio
 #
 # Note:
 # - This list excludes standard Python libraries (e.g., os, math, json).
@@ -21,3 +21,4 @@ spandrel
 pandas
 matplotlib
 psutil
+imageio

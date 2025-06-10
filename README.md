@@ -42,7 +42,8 @@ Here is a list of the custom nodes included in this package:
 
 ### Image Processing
 *   **Color Matcher (Holaf)**
-    *   *Function:* Transfers color characteristics (luminance, contrast, saturation, and overall color balance) from a reference image to a source image, with mix controls for each effect.
+    *   *Function:* Transfers color characteristics from a reference image to a source image using various scientifically-backed algorithms (e.g., Reinhard, MKL, Histogram Matching). Provides high-quality, professional-grade color grading.
+    *   *Dependencies:* `imageio`.
 *   **Instagram Resize (Holaf)**
     *   *Function:* Resizes an image to the closest standard Instagram aspect ratio (1:1, 4:5, 16:9) by adding colored bars (padding) instead of cropping.
 *   **Overlay (Holaf)**
@@ -51,9 +52,13 @@ Here is a list of the custom nodes included in this package:
     *   *Function:* Upscales an input image to a target megapixel count using a specified upscaling model.
     *   *Dependencies:* `spandrel`.
 
+### Masking
+*   **Mask to Boolean (Holaf)**
+    *   *Function:* Checks if a mask is empty (all black) and outputs a boolean value. Ideal for creating conditional bypass logic in workflows.
+
 ### Sampling
 *   **KSampler (Holaf)**
-    *   *Function:* A KSampler implementation with minor modifications.
+    *   *Function:* A KSampler implementation with added support for direct image input (auto-encoding), VRAM clearing, and a conditional bypass.
 *   **Tiled KSampler (Holaf)**
     *   *Function:* Implements the KSampler algorithm specifically designed to work on image tiles, useful for high-resolution generation.
 
