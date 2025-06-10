@@ -45,9 +45,6 @@ Here is a list of the custom nodes included in this package:
     *   *Dependencies:* `pandas`, `matplotlib`.
 
 ### Image Processing
-*   **Color Matcher (Holaf)**
-    *   *Function:* Transfers color characteristics from a reference image to a source image using various scientifically-backed algorithms (e.g., Reinhard, MKL, Histogram Matching). Provides high-quality, professional-grade color grading.
-    *   *Dependencies:* `imageio`.
 *   **Instagram Resize (Holaf)**
     *   *Function:* Resizes an image to the closest standard Instagram aspect ratio (1:1, 4:5, 16:9) by adding colored bars (padding) instead of cropping.
 *   **Overlay (Holaf)**
@@ -83,8 +80,6 @@ Here is a list of the custom nodes included in this package:
     *   *Function:* Saves a generated LUT to a `.cube` file.
 
 ### Workflow & UI
-*   **Image Comparer (Holaf)**
-    *   *Function:* Allows comparing two images side-by-side within the ComfyUI interface.
 *   **Interactive Image Editor (Holaf)**
     *   *Function:* Provides an interactive widget to adjust image parameters (brightness, contrast, etc.) with a live preview and an "Apply" button to pass the result to downstream nodes.
 *   **Resolution Preset (Holaf)**
