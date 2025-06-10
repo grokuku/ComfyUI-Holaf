@@ -36,7 +36,7 @@ class HolafKSampler:
     A wrapper for the core ComfyUI sampler.
     It supports direct image input (which is automatically VAE-encoded),
     provides an option to clear VRAM before sampling, and passes through
-    the main components for easy chaining.
+    the main components for easy chaining. It also includes a bypass option.
     """
     @classmethod
     def INPUT_TYPES(s):
@@ -54,6 +54,7 @@ class HolafKSampler:
                 "denoise": ("FLOAT", {"default": 1.00, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "input_type": (["latent", "image"], {"default": "latent"}),
                 "clean_vram": ("BOOLEAN", {"default": False}),
+                "bypass": ("BOOLEAN", {"default": False}),
             },
             "optional": {
                  "latent_image": ("LATENT",),
@@ -68,11 +69,46 @@ class HolafKSampler:
 
     def sample(self, model, positive, negative, vae,
                      seed, steps, cfg, sampler_name, scheduler, denoise,
-                     input_type, clean_vram,
+                     input_type, clean_vram, bypass,
                      latent_image=None, image=None):
         """
-        Executes the sampling process, handling input type, device placement, and VRAM.
+        Executes the sampling process, handling input type, device placement, VRAM, and bypass logic.
         """
+        # --- Bypass Logic ---
+        if bypass:
+            print("[HolafKSampler] Bypassing sampling process.")
+            # If bypassed, we must return the original inputs to maintain the workflow chain.
+            final_latent = latent_image
+            image_out = image
+
+            # If input is latent, we need to decode it to get an image for the image output.
+            if input_type == "latent" and latent_image is not None:
+                if image is None: # Only decode if no image was provided
+                    image_out = vae.decode(latent_image["samples"].to(vae.device))
+                else: # An image was already provided, just pass it through
+                    image_out = image
+            
+            # If input is an image, we need to encode it to get a latent for the latent output.
+            elif input_type == "image" and image is not None:
+                if latent_image is None: # Only encode if no latent was provided
+                    final_latent = {"samples": vae.encode(image[:,:,:,:3])}
+                else: # A latent was already provided, just pass it through
+                    final_latent = latent_image
+
+            # Ensure both outputs are valid, creating a dummy if necessary to avoid errors.
+            if image_out is None and final_latent is not None:
+                image_out = vae.decode(final_latent["samples"].to(vae.device))
+            elif final_latent is None and image_out is not None:
+                final_latent = {"samples": vae.encode(image_out[:,:,:,:3])}
+            elif final_latent is None and image_out is None:
+                # Fallback if both inputs are missing
+                dummy_latent = {"samples": torch.zeros(1, 4, 64, 64)}
+                dummy_image = torch.zeros(1, 512, 512, 3)
+                return (model, positive, negative, vae, dummy_latent, dummy_image)
+            
+            return (model, positive, negative, vae, final_latent, image_out)
+
+
         # Optionally clear VRAM to free up memory before the main operation.
         if clean_vram:
             comfy.model_management.soft_empty_cache()

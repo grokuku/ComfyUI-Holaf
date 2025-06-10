@@ -78,6 +78,10 @@ class UpscaleImageHolaf:
         # --- Two-Stage Upscaling ---
         # The upscaling is a two-stage process to handle any target size efficiently.
 
+        # FIX: Explicitly cast the input tensor to float32 (torch.float) to prevent type mismatch errors.
+        # This resolves the "Input type (double) and bias type (float) should be the same" error.
+        image = image.float()
+
         # Stage 1: Upscale using the loaded model's native scale factor.
         # `comfy.utils.tiled_scale` processes the image in chunks (tiles), which is
         # essential for handling large images that would otherwise exceed VRAM limits.
