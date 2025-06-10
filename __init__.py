@@ -24,6 +24,9 @@ from .nodes.holaf_slice_calculator import HolafSliceCalculator
 from .nodes.holaf_save_image import HolafSaveImage
 from .nodes.holaf_tiled_ksampler import HolafTiledKSampler
 from .nodes.holaf_ksampler import HolafKSampler
+# <--- RESTAURATION --->
+from .nodes.holaf_image_comparer import HolafImageComparer
+# <--- FIN RESTAURATION --->
 from .nodes.holaf_upscale_image import UpscaleImageHolaf
 from .nodes.holaf_overlay import HolafOverlayNode
 from .nodes.holaf_resolution_preset import HolafResolutionPreset
@@ -31,14 +34,10 @@ from .nodes.HolafBenchmarkRunner import HolafBenchmarkRunner
 from .nodes.HolafBenchmarkPlotter import HolafBenchmarkPlotter
 from .nodes.HolafBenchmarkLoader import HolafBenchmarkLoader
 from .nodes.holaf_instagram_resize import HolafInstagramResize
-# <--- MODIFICATION : Ligne supprimée --->
-# from .nodes.holaf_color_matcher import HolafColorMatcher
-# <--- FIN MODIFICATION --->
 from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_applier import HolafLutApplier
 from .nodes.holaf_lut_loader import HolafLutLoader
 from .nodes.holaf_lut_saver import HolafLutSaver
-from .nodes.holaf_interactive_image_editor import HolafInteractiveImageEditor
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 
 
@@ -50,6 +49,9 @@ NODE_CLASS_MAPPINGS = {
     "HolafSaveImage": HolafSaveImage,
     "HolafTiledKSampler": HolafTiledKSampler,
     "HolafKSampler": HolafKSampler,
+    # <--- RESTAURATION --->
+    'HolafImageComparer': HolafImageComparer,
+    # <--- FIN RESTAURATION --->
     "UpscaleImageHolaf": UpscaleImageHolaf,
     "HolafOverlayNode": HolafOverlayNode,
     "HolafResolutionPreset": HolafResolutionPreset,
@@ -57,14 +59,10 @@ NODE_CLASS_MAPPINGS = {
     "HolafBenchmarkPlotter": HolafBenchmarkPlotter,
     "HolafBenchmarkLoader": HolafBenchmarkLoader,
     "HolafInstagramResize": HolafInstagramResize,
-    # <--- MODIFICATION : Ligne supprimée --->
-    # "HolafColorMatcher": HolafColorMatcher,
-    # <--- FIN MODIFICATION --->
     "HolafLutGenerator": HolafLutGenerator,
     "HolafLutApplier": HolafLutApplier,
     "HolafLutLoader": HolafLutLoader,
     "HolafLutSaver": HolafLutSaver,
-    "HolafInteractiveImageEditor": HolafInteractiveImageEditor,
     "HolafMaskToBoolean": HolafMaskToBoolean,
 }
 
@@ -75,6 +73,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafSaveImage": "Save Image (Holaf)",
     "HolafTiledKSampler": "Tiled KSampler (Holaf)",
     "HolafKSampler": "KSampler (Holaf)",
+    # <--- RESTAURATION --->
+    'HolafImageComparer': "Image Comparer (Holaf)",
+    # <--- FIN RESTAURATION --->
     "UpscaleImageHolaf": "Upscale (Holaf)",
     "HolafOverlayNode": "Overlay (Holaf)",
     "HolafResolutionPreset": "Resolution Preset (Holaf)",
@@ -82,14 +83,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafBenchmarkPlotter": "Benchmark Plotter (Holaf)",
     "HolafBenchmarkLoader": "Benchmark Loader (Holaf)",
     "HolafInstagramResize": "Instagram Resize (Holaf)",
-    # <--- MODIFICATION : Ligne supprimée --->
-    # "HolafColorMatcher": "Color Matcher (Holaf)",
-    # <--- FIN MODIFICATION --->
     "HolafLutGenerator": "LUT Generator (Holaf)",
     "HolafLutApplier": "LUT Applier (Holaf)",
     "HolafLutLoader": "LUT Loader (Holaf)",
     "HolafLutSaver": "LUT Saver (Holaf)",
-    "HolafInteractiveImageEditor": "Interactive Image Editor (Holaf)",
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
 }
 

@@ -80,8 +80,6 @@ Here is a list of the custom nodes included in this package:
     *   *Function:* Saves a generated LUT to a `.cube` file.
 
 ### Workflow & UI
-*   **Interactive Image Editor (Holaf)**
-    *   *Function:* Provides an interactive widget to adjust image parameters (brightness, contrast, etc.) with a live preview and an "Apply" button to pass the result to downstream nodes.
 *   **Resolution Preset (Holaf)**
     *   *Function:* Helps select optimal image dimensions (width, height) based on a target model (SD1.5, SDXL, FLUX) and a desired aspect ratio.
 *   **Save Image (Holaf)**
