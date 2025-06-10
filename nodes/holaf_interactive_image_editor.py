@@ -1,13 +1,18 @@
-"""
-This module defines the HolafInteractiveImageEditor node for ComfyUI.
-It provides a user interface with sliders to adjust image properties like brightness,
-contrast, saturation, and color channels. The node shows a live preview of the changes.
+# Copyright (C) 2025 Holaf
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-The core logic ensures that changes are only passed to downstream nodes when the user
-explicitly clicks the "Apply & Process Downstream" button in the node's UI. This prevents
-the workflow from re-running on every small slider adjustment, while still providing
-an interactive preview.
-"""
 import torch
 import numpy as np
 import folder_paths

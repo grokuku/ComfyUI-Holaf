@@ -1,12 +1,21 @@
-/**
- * @file This script defines the frontend logic for the 'HolafInteractiveImageEditor' node.
- * It creates a custom DOM-based widget that displays an original and a modified image
- * side-by-side with a draggable separator. The node also includes an "Apply" button
- * that triggers the backend processing for downstream nodes.
+/*
+ * Copyright (C) 2025 Holaf
  *
- * This implementation uses a custom <canvas> element within a DOM widget to handle
- * image drawing and interactions, providing a responsive and interactive user experience.
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+
+
 import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 
