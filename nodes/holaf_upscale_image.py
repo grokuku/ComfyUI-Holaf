@@ -46,6 +46,7 @@ class UpscaleImageHolaf:
                 "upscale_method": (s.upscale_methods,),
                 # The target output size, expressed in megapixels.
                 "megapixels": ("FLOAT", {"default": 2.00, "min": 0.01, "max": 16.00, "step": 0.01}),
+                "clean_vram": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -54,7 +55,11 @@ class UpscaleImageHolaf:
     FUNCTION = "upscale"
     CATEGORY = "Holaf"
 
-    def upscale(self, image, model_name, upscale_method, megapixels):
+    def upscale(self, image, model_name, upscale_method, megapixels, clean_vram):
+        # Optionally clear VRAM to free up memory before the main operation.
+        if clean_vram:
+            comfy.model_management.soft_empty_cache()
+
         # If no model is selected, simply pass the image through without changes.
         if model_name == "None" or not model_name:
              return (image, "None")

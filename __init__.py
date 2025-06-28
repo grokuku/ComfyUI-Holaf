@@ -24,9 +24,7 @@ from .nodes.holaf_slice_calculator import HolafSliceCalculator
 from .nodes.holaf_save_image import HolafSaveImage
 from .nodes.holaf_tiled_ksampler import HolafTiledKSampler
 from .nodes.holaf_ksampler import HolafKSampler
-# <--- RESTAURATION --->
 from .nodes.holaf_image_comparer import HolafImageComparer
-# <--- FIN RESTAURATION --->
 from .nodes.holaf_upscale_image import UpscaleImageHolaf
 from .nodes.holaf_overlay import HolafOverlayNode
 from .nodes.holaf_resolution_preset import HolafResolutionPreset
@@ -35,23 +33,22 @@ from .nodes.HolafBenchmarkPlotter import HolafBenchmarkPlotter
 from .nodes.HolafBenchmarkLoader import HolafBenchmarkLoader
 from .nodes.holaf_instagram_resize import HolafInstagramResize
 from .nodes.holaf_lut_generator import HolafLutGenerator
-from .nodes.holaf_lut_applier import HolafLutApplier
-from .nodes.holaf_lut_loader import HolafLutLoader
 from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
+from .nodes.holaf_ratio_calculator import HolafRatioCalculator
+# Imports pour l'orchestrateur
+from .nodes.holaf_orchestrator_config import HolafOrchestratorConfig
+from .nodes.HolafInternalSampler import HolafInternalSampler
 
 
 # Maps internal class names to the node's implementation.
-# ComfyUI uses this to instantiate the correct node class.
 NODE_CLASS_MAPPINGS = {
     "HolafTileCalculator": HolafTileCalculator,
     "HolafSliceCalculator": HolafSliceCalculator,
     "HolafSaveImage": HolafSaveImage,
     "HolafTiledKSampler": HolafTiledKSampler,
     "HolafKSampler": HolafKSampler,
-    # <--- RESTAURATION --->
     'HolafImageComparer': HolafImageComparer,
-    # <--- FIN RESTAURATION --->
     "UpscaleImageHolaf": UpscaleImageHolaf,
     "HolafOverlayNode": HolafOverlayNode,
     "HolafResolutionPreset": HolafResolutionPreset,
@@ -60,10 +57,12 @@ NODE_CLASS_MAPPINGS = {
     "HolafBenchmarkLoader": HolafBenchmarkLoader,
     "HolafInstagramResize": HolafInstagramResize,
     "HolafLutGenerator": HolafLutGenerator,
-    "HolafLutApplier": HolafLutApplier,
-    "HolafLutLoader": HolafLutLoader,
     "HolafLutSaver": HolafLutSaver,
     "HolafMaskToBoolean": HolafMaskToBoolean,
+    "HolafRatioCalculator": HolafRatioCalculator,
+    # Mappings pour l'orchestrateur
+    "HolafOrchestratorConfig": HolafOrchestratorConfig,
+    "HolafInternalSampler": HolafInternalSampler,
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
@@ -73,9 +72,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafSaveImage": "Save Image (Holaf)",
     "HolafTiledKSampler": "Tiled KSampler (Holaf)",
     "HolafKSampler": "KSampler (Holaf)",
-    # <--- RESTAURATION --->
     'HolafImageComparer': "Image Comparer (Holaf)",
-    # <--- FIN RESTAURATION --->
     "UpscaleImageHolaf": "Upscale (Holaf)",
     "HolafOverlayNode": "Overlay (Holaf)",
     "HolafResolutionPreset": "Resolution Preset (Holaf)",
@@ -84,10 +81,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafBenchmarkLoader": "Benchmark Loader (Holaf)",
     "HolafInstagramResize": "Instagram Resize (Holaf)",
     "HolafLutGenerator": "LUT Generator (Holaf)",
-    "HolafLutApplier": "LUT Applier (Holaf)",
-    "HolafLutLoader": "LUT Loader (Holaf)",
     "HolafLutSaver": "LUT Saver (Holaf)",
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
+    "HolafRatioCalculator": "Ratio Calculator (Holaf)",
+    # Noms d'affichage pour l'orchestrateur
+    "HolafOrchestratorConfig": "Orchestrator Config (Holaf)",
+    "HolafInternalSampler": "Internal Sampler (Holaf)",
 }
 
 # The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.

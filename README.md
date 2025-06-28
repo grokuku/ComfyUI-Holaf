@@ -72,10 +72,6 @@ Here is a list of the custom nodes included in this package:
 ### LUT (Look-Up Table) Tools
 *   **LUT Generator (Holaf)**
     *   *Function:* Analyzes the color profile of a reference image and generates a 3D Look-Up Table (LUT).
-*   **LUT Applier (Holaf)**
-    *   *Function:* Applies a 3D LUT to a source image to perform a complex color grade, with control over the intensity.
-*   **LUT Loader (Holaf)**
-    *   *Function:* Loads a `.cube` LUT file from the `ComfyUI/models/luts` directory.
 *   **LUT Saver (Holaf)**
     *   *Function:* Saves a generated LUT to a `.cube` file.
 
