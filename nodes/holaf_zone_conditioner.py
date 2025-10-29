@@ -18,6 +18,7 @@ import json
 from comfy.sd import CLIP
 import comfy.sd
 import comfy.model_management
+from nodes import ConditioningCombine # Import the core ConditioningCombine node
 
 class HolafZoneConditioner:
     """
@@ -60,6 +61,7 @@ class HolafZoneConditioner:
             return (final_cond, )
 
         zone_prompts = [prompt_zone_1, prompt_zone_2, prompt_zone_3]
+        combiner = ConditioningCombine()
 
         # --- 3. Process each zone ---
         for i, zone in enumerate(zone_data):
@@ -69,24 +71,25 @@ class HolafZoneConditioner:
 
             # --- 4. Create additive prompt and encode it ---
             additive_prompt = f"{prompt_global}, {prompt_text}"
-            
             print(f"[HolafZoneConditioner] Applying prompt for Zone {i+1}: '{prompt_text}'")
 
             zone_tokens = clip.tokenize(additive_prompt)
             zone_cond, zone_pooled = clip.encode_from_tokens(zone_tokens, return_pooled=True)
 
-            # --- 5. Apply the new conditioning to the specified area ---
-            # The coordinates must be divided by the latent downscale factor (usually 8) 
-            downscale_factor = 8 
-            final_cond = comfy.sd.ConditioningSetArea().append(
-                conditioning_to=final_cond, 
-                conditioning_from=[[zone_cond, {"pooled_output": zone_pooled}]], 
-                x=zone['x'] // downscale_factor, 
-                y=zone['y'] // downscale_factor, 
-                width=zone['width'] // downscale_factor, 
-                height=zone['height'] // downscale_factor, 
-                strength=1.0
-            )[0]
+            # --- 5. Create the mask for the zone ---
+            downscale_factor = 8
+            mask = torch.zeros([1, height // downscale_factor, width // downscale_factor])
+            x = zone['x'] // downscale_factor
+            y = zone['y'] // downscale_factor
+            mask_width = zone['width'] // downscale_factor
+            mask_height = zone['height'] // downscale_factor
+            mask[:, y:y+mask_height, x:x+mask_width] = 1.0
+
+            # --- 6. Create the zone's conditioning with the mask ---
+            zone_conditioning = [[zone_cond, {"pooled_output": zone_pooled, "mask": mask, "strength": 1.0}]]
+
+            # --- 7. Combine it with the main conditioning ---
+            final_cond = combiner.combine(final_cond, zone_conditioning)[0]
 
         return (final_cond, )
 
