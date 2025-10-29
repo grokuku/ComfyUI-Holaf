@@ -36,6 +36,7 @@ from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 from .nodes.holaf_ratio_calculator import HolafRatioCalculator
+from .nodes.holaf_zone_conditioner import HolafZoneConditioner
 # Imports pour l'orchestrateur
 from .nodes.holaf_orchestrator_config import HolafOrchestratorConfig
 from .nodes.HolafInternalSampler import HolafInternalSampler
@@ -60,6 +61,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafLutSaver": HolafLutSaver,
     "HolafMaskToBoolean": HolafMaskToBoolean,
     "HolafRatioCalculator": HolafRatioCalculator,
+    "HolafZoneConditioner": HolafZoneConditioner,
     # Mappings pour l'orchestrateur
     "HolafOrchestratorConfig": HolafOrchestratorConfig,
     "HolafInternalSampler": HolafInternalSampler,
@@ -84,6 +86,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafLutSaver": "LUT Saver (Holaf)",
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
     "HolafRatioCalculator": "Ratio Calculator (Holaf)",
+    "HolafZoneConditioner": "Zone Conditioner (Holaf)",
     # Noms d'affichage pour l'orchestrateur
     "HolafOrchestratorConfig": "Orchestrator Config (Holaf)",
     "HolafInternalSampler": "Internal Sampler (Holaf)",

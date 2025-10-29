@@ -18,71 +18,6 @@ import sys
 import random
 import torch
 
-# --- Predefined Optimal Resolutions ---
-# These are lists of (width, height, aspect_ratio) tuples that are known to
-# work well with their respective models, minimizing artifacts.
-
-# Resolutions commonly used or trained for SD 1.5 models.
-SD15_RESOLUTIONS = [
-    (512, 512, 1.0),
-    (768, 512, 1.5),
-    (512, 768, 512/768),
-]
-
-# Resolutions officially recommended by Stability AI for SDXL 1.0.
-SDXL_RESOLUTIONS = [
-    (1024, 1024, 1.0),
-    (1152, 896, 1152/896),
-    (896, 1152, 896/1152),
-    (1216, 832, 1216/832),
-    (832, 1216, 832/1216),
-    (1344, 768, 1344/768),
-    (768, 1344, 768/1344),
-    (1536, 640, 1536/640),
-    (640, 1536, 640/1536),
-]
-
-# Recommended resolutions for FLUX, respecting its unique constraints
-# (e.g., total pixels ~1-2M, multiples of 8).
-FLUX_RESOLUTIONS = [
-    (896, 1600, 896/1600),     # 9:16 Portrait
-    (1024, 1536, 1024/1536),    # 2:3 Portrait
-    (1200, 1600, 1200/1600),    # 3:4 Portrait
-    (1024, 1280, 1024/1280),    # 4:5 Portrait
-    (1024, 1024, 1.0),         # 1:1 Square
-    (1280, 1024, 1280/1024),    # 5:4 Landscape
-    (1600, 1200, 1600/1200),    # 4:3 Landscape
-    (1536, 1024, 1536/1024),    # 3:2 Landscape
-    (1824, 1024, 1824/1024),    # 16:9 Landscape
-    (1832, 768, 1832/768),     # ~2.39:1 Landscape
-]
-
-# --- Constraints for Dynamically Calculated Resolutions ---
-# These parameters are used when no predefined resolution matches the target aspect ratio.
-MODEL_MP_RANGES = { # Target total pixel count (Megapixels)
-    "SD1.5": (250000, 600000),
-    "SDXL": (1000000, 1500000),
-    "FLUX": (1000000, 2000000),
-}
-MODEL_ROUNDING = { # Dimensions must be a multiple of this value.
-    "SD1.5": 64,
-    "SDXL": 8,
-    "FLUX": 8,
-}
-MODEL_MAX_DIMS = { # The largest recommended side for generation.
-    "SD1.5": 768,
-    "SDXL": 1536,
-    "FLUX": 1832,
-}
-MODEL_RESOLUTIONS = {
-    "SD1.5": SD15_RESOLUTIONS,
-    "SDXL": SDXL_RESOLUTIONS,
-    "FLUX": FLUX_RESOLUTIONS,
-}
-
-# A small tolerance for comparing float aspect ratios.
-RATIO_TOLERANCE = sys.float_info.epsilon * 10
-
 # Maps user-friendly names to their float values for the UI dropdown.
 ASPECT_RATIOS = {
     "9:16 Portrait (Mobile Video)": 9/16,
@@ -97,13 +32,78 @@ ASPECT_RATIOS = {
     "~2.39:1 Landscape (Anamorphic Cinema)": 2.39,
 }
 
+# Master dictionary defining a single, optimal resolution for each
+# model and aspect ratio combination. This enforces deterministic behavior.
+MASTER_RESOLUTIONS = {
+    "SD1.5": {
+        "9:16 Portrait (Mobile Video)": (512, 912),
+        "2:3 Portrait (35mm Photo)": (512, 768),
+        "3:4 Portrait (Classic Monitor-Photo)": (576, 768),
+        "4:5 Portrait (Large Format Photo)": (512, 640),
+        "1:1 Square (Instagram-Medium Format)": (512, 512),
+        "5:4 Landscape (Large Format Photo)": (640, 512),
+        "4:3 Landscape (Classic Monitor-Photo)": (768, 576),
+        "3:2 Landscape (35mm Photo)": (768, 512),
+        "16:9 Landscape (HD Video-Widescreen)": (912, 512),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (1024, 432),
+    },
+    "SDXL": {
+        "9:16 Portrait (Mobile Video)": (768, 1344),
+        "2:3 Portrait (35mm Photo)": (832, 1216),
+        "3:4 Portrait (Classic Monitor-Photo)": (896, 1152),
+        "4:5 Portrait (Large Format Photo)": (896, 1120),
+        "1:1 Square (Instagram-Medium Format)": (1024, 1024),
+        "5:4 Landscape (Large Format Photo)": (1120, 896),
+        "4:3 Landscape (Classic Monitor-Photo)": (1152, 864),
+        "3:2 Landscape (35mm Photo)": (1216, 832),
+        "16:9 Landscape (HD Video-Widescreen)": (1344, 768),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (1536, 640),
+    },
+    "FLUX": {
+        "9:16 Portrait (Mobile Video)": (896, 1600),
+        "2:3 Portrait (35mm Photo)": (1024, 1536),
+        "3:4 Portrait (Classic Monitor-Photo)": (1200, 1600),
+        "4:5 Portrait (Large Format Photo)": (1024, 1280),
+        "1:1 Square (Instagram-Medium Format)": (1024, 1024),
+        "5:4 Landscape (Large Format Photo)": (1280, 1024),
+        "4:3 Landscape (Classic Monitor-Photo)": (1600, 1200),
+        "3:2 Landscape (35mm Photo)": (1536, 1024),
+        "16:9 Landscape (HD Video-Widescreen)": (1824, 1024),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (1832, 768),
+    },
+    "Qwen-Image": {
+        "9:16 Portrait (Mobile Video)": (928, 1664),
+        "2:3 Portrait (35mm Photo)": (1024, 1536),
+        "3:4 Portrait (Classic Monitor-Photo)": (1140, 1472),
+        "4:5 Portrait (Large Format Photo)": (1184, 1480),
+        "1:1 Square (Instagram-Medium Format)": (1328, 1328),
+        "5:4 Landscape (Large Format Photo)": (1480, 1184),
+        "4:3 Landscape (Classic Monitor-Photo)": (1472, 1140),
+        "3:2 Landscape (35mm Photo)": (1600, 1088),
+        "16:9 Landscape (HD Video-Widescreen)": (1664, 928),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (1856, 768),
+    },
+    "Qwen-Edit": {
+        "9:16 Portrait (Mobile Video)": (928, 1664),
+        "2:3 Portrait (35mm Photo)": (1008, 1512),
+        "3:4 Portrait (Classic Monitor-Photo)": (1140, 1472),
+        "4:5 Portrait (Large Format Photo)": (1184, 1480),
+        "1:1 Square (Instagram-Medium Format)": (1328, 1328),
+        "5:4 Landscape (Large Format Photo)": (1480, 1184),
+        "4:3 Landscape (Classic Monitor-Photo)": (1472, 1140),
+        "3:2 Landscape (35mm Photo)": (1560, 1040),
+        "16:9 Landscape (HD Video-Widescreen)": (1664, 928),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (1856, 768),
+    },
+}
+
 
 class HolafResolutionPreset:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model_type": (list(MODEL_RESOLUTIONS.keys()),),
+                "model_type": (list(MASTER_RESOLUTIONS.keys()),),
                 "aspect_ratio": (["Random"] + list(ASPECT_RATIOS.keys()),),
                 "use_image_ratio": ("BOOLEAN", {"default": False}),
             },
@@ -118,11 +118,6 @@ class HolafResolutionPreset:
     CATEGORY = "Holaf"
 
     def IS_CHANGED(self, model_type, aspect_ratio, use_image_ratio, image=None):
-        """
-        Forces the node to re-execute under specific conditions. This is crucial for
-        the "Random" option to ensure a new resolution is picked on each run.
-        It also re-runs if the input image's shape changes when `use_image_ratio` is active.
-        """
         if aspect_ratio == "Random":
             return random.random()
 
@@ -132,74 +127,30 @@ class HolafResolutionPreset:
 
         return f"{model_type}-{aspect_ratio}-{use_image_ratio}-{image_hash}"
 
-    def _round_to_multiple(self, value, multiple):
-        """Helper function to round a value to the nearest specified multiple."""
-        if multiple == 0:
-            return max(1, round(value))
-        return max(multiple, round(value / multiple) * multiple)
-
     def get_resolution(self, model_type, aspect_ratio, use_image_ratio, image=None):
-        """
-        Determines and returns an optimal width and height based on user inputs.
-        """
-        target_ratio = None
-        
-        # 1. Determine the target aspect ratio. Priority is given to the input image.
+        target_ratio_name = aspect_ratio
+
+        # If using image ratio, find the closest matching ratio name from our list
         if use_image_ratio and image is not None and isinstance(image, torch.Tensor) and image.ndim == 4:
             img_height, img_width = image.shape[1], image.shape[2]
             if img_height > 0 and img_width > 0:
-                target_ratio = img_width / img_height
+                image_ratio = img_width / img_height
+                # Find the aspect ratio name in ASPECT_RATIOS that is closest to image_ratio
+                closest_ratio_name = min(ASPECT_RATIOS.keys(), key=lambda name: abs(ASPECT_RATIOS[name] - image_ratio))
+                target_ratio_name = closest_ratio_name
+                print(f"[HolafResolutionPreset] Detected image ratio ~{image_ratio:.2f}. Matched to '{target_ratio_name}'.")
 
-        # If not using image ratio, use the dropdown selection.
-        if target_ratio is None:
-            if aspect_ratio == "Random":
-                selected_name = random.choice(list(ASPECT_RATIOS.keys()))
-                target_ratio = ASPECT_RATIOS[selected_name]
-            else:
-                target_ratio = ASPECT_RATIOS.get(aspect_ratio, 1.0)
-        
-        # 2. Get the list of predefined resolutions for the selected model.
-        available_resolutions = MODEL_RESOLUTIONS[model_type]
+        # Handle random selection
+        if target_ratio_name == "Random":
+            target_ratio_name = random.choice(list(ASPECT_RATIOS.keys()))
 
-        # 3. Try to find a predefined resolution that perfectly matches the target ratio.
-        # This is the ideal case.
-        for w, h, r in available_resolutions:
-            if abs(r - target_ratio) < RATIO_TOLERANCE:
-                print(f"[HolafResolutionPreset] Found exact predefined match: {w}x{h}")
-                return (w, h)
+        # The core of the new logic: a direct lookup.
+        # Fallback to 1:1 if the ratio name is somehow invalid.
+        if target_ratio_name not in MASTER_RESOLUTIONS[model_type]:
+            print(f"[HolafResolutionPreset] Warning: Ratio '{target_ratio_name}' not found for model '{model_type}'. Defaulting to 1:1.")
+            target_ratio_name = "1:1 Square (Instagram-Medium Format)"
 
-        # 4. If no exact match is found, calculate a new resolution from scratch.
-        print(f"[HolafResolutionPreset] No exact match for ratio {target_ratio:.4f}. Calculating new resolution...")
-        
-        # Get the calculation constraints for the selected model.
-        max_dim = MODEL_MAX_DIMS[model_type]
-        min_pixels, max_pixels = MODEL_MP_RANGES[model_type]
-        rounding = MODEL_ROUNDING[model_type]
+        width, height = MASTER_RESOLUTIONS[model_type][target_ratio_name]
 
-        # Calculate initial dimensions based on the model's max dimension and target ratio.
-        is_landscape_or_square = target_ratio >= 1.0
-        if is_landscape_or_square:
-            width_initial, height_initial = max_dim, max_dim / target_ratio
-        else: # Portrait
-            height_initial, width_initial = max_dim, max_dim * target_ratio
-
-        # Scale the dimensions to fit within the model's recommended megapixel range.
-        current_pixels = width_initial * height_initial
-        if current_pixels > 0:
-            scale_factor = 1.0
-            if current_pixels < min_pixels:
-                scale_factor = math.sqrt(min_pixels / current_pixels)
-            elif current_pixels > max_pixels:
-                scale_factor = math.sqrt(max_pixels / current_pixels)
-            
-            width_adjusted = width_initial * scale_factor
-            height_adjusted = height_initial * scale_factor
-        else:
-            width_adjusted, height_adjusted = 512, 512 # Fallback
-
-        # Round the final dimensions to the required multiple (e.g., 64 for SD1.5).
-        final_width = self._round_to_multiple(width_adjusted, rounding)
-        final_height = self._round_to_multiple(height_adjusted, rounding)
-
-        print(f"[HolafResolutionPreset] Calculated Resolution: W={final_width}, H={final_height}")
-        return (final_width, final_height)
+        print(f"[HolafResolutionPreset] Selected: {model_type} @ {target_ratio_name}. Resolution: {width}x{height}")
+        return (width, height)
