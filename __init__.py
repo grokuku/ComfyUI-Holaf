@@ -23,6 +23,7 @@ from .nodes.holaf_tile_calculator import HolafTileCalculator
 from .nodes.holaf_slice_calculator import HolafSliceCalculator
 from .nodes.holaf_save_image import HolafSaveImage
 from .nodes.holaf_tiled_ksampler import HolafTiledKSampler
+from .nodes.holaf_tiled_diffusion_ksampler import HolafTiledDiffusionKSampler
 from .nodes.holaf_ksampler import HolafKSampler
 from .nodes.holaf_image_comparer import HolafImageComparer
 from .nodes.holaf_upscale_image import UpscaleImageHolaf
@@ -47,6 +48,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafSliceCalculator": HolafSliceCalculator,
     "HolafSaveImage": HolafSaveImage,
     "HolafTiledKSampler": HolafTiledKSampler,
+    "HolafTiledDiffusionKSampler": HolafTiledDiffusionKSampler,
     "HolafKSampler": HolafKSampler,
     'HolafImageComparer': HolafImageComparer,
     "UpscaleImageHolaf": UpscaleImageHolaf,
@@ -71,6 +73,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafSliceCalculator": "Slice Calculator (Holaf)",
     "HolafSaveImage": "Save Image (Holaf)",
     "HolafTiledKSampler": "Tiled KSampler (Holaf)",
+    "HolafTiledDiffusionKSampler": "Tiled Diffusion KSampler (Holaf)",
     "HolafKSampler": "KSampler (Holaf)",
     'HolafImageComparer': "Image Comparer (Holaf)",
     "UpscaleImageHolaf": "Upscale (Holaf)",
