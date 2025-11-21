@@ -38,9 +38,7 @@ from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 from .nodes.holaf_ratio_calculator import HolafRatioCalculator
 
-# Imports pour l'orchestrateur
-from .nodes.holaf_orchestrator_config import HolafOrchestratorConfig
-from .nodes.HolafInternalSampler import HolafInternalSampler
+
 
 
 # Maps internal class names to the node's implementation.
@@ -64,9 +62,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafMaskToBoolean": HolafMaskToBoolean,
     "HolafRatioCalculator": HolafRatioCalculator,
 
-    # Mappings pour l'orchestrateur
-    "HolafOrchestratorConfig": HolafOrchestratorConfig,
-    "HolafInternalSampler": HolafInternalSampler,
+
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
@@ -90,9 +86,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
     "HolafRatioCalculator": "Ratio Calculator (Holaf)",
 
-    # Noms d'affichage pour l'orchestrateur
-    "HolafOrchestratorConfig": "Orchestrator Config (Holaf)",
-    "HolafInternalSampler": "Internal Sampler (Holaf)",
+
 }
 
 # The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.
