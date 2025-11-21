@@ -77,7 +77,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafSliceCalculator": "Slice Calculator (Holaf)",
     "HolafSaveImage": "Save Image (Holaf)",
     "HolafTiledKSampler": "Tiled KSampler (Holaf)",
-    "HolafTiledDiffusionKSampler": "Tiled Diffusion KSampler (Holaf)",
+
     "HolafKSampler": "KSampler (Holaf)",
     'HolafImageComparer': "Image Comparer (Holaf)",
     "UpscaleImageHolaf": "Upscale (Holaf)",
