@@ -37,8 +37,7 @@ from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 from .nodes.holaf_ratio_calculator import HolafRatioCalculator
-from .nodes.holaf_regional_prompter import HolafRegionalPrompter
-from .nodes.holaf_regional_sampler import HolafRegionalSampler
+
 # Imports pour l'orchestrateur
 from .nodes.holaf_orchestrator_config import HolafOrchestratorConfig
 from .nodes.HolafInternalSampler import HolafInternalSampler
@@ -64,8 +63,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafLutSaver": HolafLutSaver,
     "HolafMaskToBoolean": HolafMaskToBoolean,
     "HolafRatioCalculator": HolafRatioCalculator,
-    "HolafRegionalPrompter": HolafRegionalPrompter,
-    "HolafRegionalSampler": HolafRegionalSampler,
+
     # Mappings pour l'orchestrateur
     "HolafOrchestratorConfig": HolafOrchestratorConfig,
     "HolafInternalSampler": HolafInternalSampler,
@@ -91,8 +89,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafLutSaver": "LUT Saver (Holaf)",
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
     "HolafRatioCalculator": "Ratio Calculator (Holaf)",
-    "HolafRegionalPrompter": "Regional Prompter (Holaf)",
-    "HolafRegionalSampler": "Regional Sampler (Holaf)",
+
     # Noms d'affichage pour l'orchestrateur
     "HolafOrchestratorConfig": "Orchestrator Config (Holaf)",
     "HolafInternalSampler": "Internal Sampler (Holaf)",
