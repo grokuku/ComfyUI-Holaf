@@ -50,7 +50,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafSliceCalculator": HolafSliceCalculator,
     "HolafSaveImage": HolafSaveImage,
     "HolafTiledKSampler": HolafTiledKSampler,
-    "HolafTiledDiffusionKSampler": HolafTiledDiffusionKSampler,
+
     "HolafKSampler": HolafKSampler,
     'HolafImageComparer': HolafImageComparer,
     "UpscaleImageHolaf": UpscaleImageHolaf,

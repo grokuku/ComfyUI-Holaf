@@ -51,15 +51,15 @@ class HolafRegionalPrompter:
         global_cond, global_pooled = clip.encode_from_tokens(global_tokens, return_pooled=True)
         
                 # The reference pipeline expects concatenated text_ids from both tokenizers for FLUX
-                if 'g' in global_tokens and 'l' in global_tokens:
-                    # This is a FLUX-style dual CLIP
-                    global_text_ids = torch.cat([global_tokens['l'], global_tokens['g']], dim=-1).to(device)
-                elif 'l' in global_tokens:
-                    # This is likely a standard single CLIP
-                    print("[HolafRegionalPrompter] Warning: Single CLIP detected. This node is designed for FLUX and may not work as expected.")
-                    global_text_ids = global_tokens['l'].to(device)
-                else:
-                    raise TypeError("Unsupported token structure from CLIP. This node requires a FLUX-compatible dual CLIP model.")
+        if 'g' in global_tokens and 'l' in global_tokens:
+            # This is a FLUX-style dual CLIP
+            global_text_ids = torch.cat([global_tokens['l'], global_tokens['g']], dim=-1).to(device)
+        elif 'l' in global_tokens:
+            # This is likely a standard single CLIP
+            print("[HolafRegionalPrompter] Warning: Single CLIP detected. This node is designed for FLUX and may not work as expected.")
+            global_text_ids = global_tokens['l'].to(device)
+        else:
+            raise TypeError("Unsupported token structure from CLIP. This node requires a FLUX-compatible dual CLIP model.")
         
                 latent_image_ids = torch.zeros(1, 64, dtype=torch.int32, device=device)
         # --- 2. Parse zone data and encode regional prompts ---
