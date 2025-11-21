@@ -16,9 +16,8 @@
  */
 
 import { app } from "../../scripts/app.js";
-import { api } from "../../scripts/api.js";
 
-// --- Base class for custom widgets ---
+// Base class for custom widgets
 class HolafBaseWidget {
     constructor(name) {
         this.name = name;
@@ -34,11 +33,13 @@ class HolafBaseWidget {
 }
 
 
-class ZoneConditionerWidget extends HolafBaseWidget {
+class RegionalPrompterWidget extends HolafBaseWidget {
     constructor(name, node) {
         super(name);
         this.node = node;
-        this.value = this.parseValue(node.widgets.find(w => w.name === "zones").value);
+        // Find the 'zones' widget and parse its initial value
+        const zonesWidget = node.widgets.find(w => w.name === "zones");
+        this.value = this.parseValue(zonesWidget ? zonesWidget.value : '[]');
 
         // --- Default state for the 3 zones ---
         this.colors = ["rgba(255, 0, 0, 0.5)", "rgba(0, 255, 0, 0.5)", "rgba(0, 0, 255, 0.5)"];
@@ -60,17 +61,16 @@ class ZoneConditionerWidget extends HolafBaseWidget {
             }
             return value;
         } catch (e) {
-            console.error("[HolafZoneConditioner] Error parsing zone data:", e);
+            console.error("[HolafRegionalPrompter] Error parsing zone data:", e);
             return [];
         }
     }
 
-    // --- Main drawing method ---
     draw(ctx, node, widgetWidth, y, widgetHeight) {
-        const [width, height] = [node.widgets.find(w=>w.name==='width').value, node.widgets.find(w=>w.name==='height').value];
-        const aspectRatio = width / height;
+        const width = node.widgets.find(w=>w.name==='width').value;
+        const height = node.widgets.find(w=>w.name==='height').value;
+        const aspectRatio = width > 0 && height > 0 ? width / height : 1;
         
-        // --- Calculate display area to fit widget ---
         let displayHeight = node.size[1] - y - 10;
         let displayWidth = displayHeight * aspectRatio;
         if (displayWidth > node.size[0] - 20) {
@@ -82,13 +82,11 @@ class ZoneConditionerWidget extends HolafBaseWidget {
 
         this.displayRect = { x: offsetX, y: offsetY, width: displayWidth, height: displayHeight };
 
-        // --- Draw background ---
         ctx.fillStyle = "#222";
         ctx.fillRect(offsetX, offsetY, displayWidth, displayHeight);
         ctx.strokeStyle = "#555";
         ctx.strokeRect(offsetX, offsetY, displayWidth, displayHeight);
 
-        // --- Draw zones ---
         this.value.forEach(zone => {
             const rectX = offsetX + (zone.x / width) * displayWidth;
             const rectY = offsetY + (zone.y / height) * displayHeight;
@@ -103,7 +101,6 @@ class ZoneConditionerWidget extends HolafBaseWidget {
                 ctx.lineWidth = 2;
                 ctx.strokeRect(rectX, rectY, rectW, rectH);
 
-                // Draw resize handle
                 ctx.fillStyle = "#FFFFFF";
                 ctx.fillRect(rectX + rectW - this.RESIZE_HANDLE_SIZE / 2, rectY + rectH - this.RESIZE_HANDLE_SIZE / 2, this.RESIZE_HANDLE_SIZE, this.RESIZE_HANDLE_SIZE);
             }
@@ -111,7 +108,6 @@ class ZoneConditionerWidget extends HolafBaseWidget {
         ctx.lineWidth = 1;
     }
 
-    // --- Mouse Interaction ---
     mouse(event, pos, node) {
         if (event.type === "mousedown") {
             return this.onMouseDown(event, pos, node);
@@ -127,25 +123,23 @@ class ZoneConditionerWidget extends HolafBaseWidget {
         const x = pos[0];
         const y = pos[1];
 
-        // Check if clicking on any zone
         for (let i = this.value.length - 1; i >= 0; i--) {
             const zone = this.value[i];
-            const rectX = this.displayRect.x + (zone.x / node.widgets.find(w=>w.name==='width').value) * this.displayRect.width;
-            const rectY = this.displayRect.y + (zone.y / node.widgets.find(w=>w.name==='height').value) * this.displayRect.height;
-            const rectW = (zone.width / node.widgets.find(w=>w.name==='width').value) * this.displayRect.width;
-            const rectH = (zone.height / node.widgets.find(w=>w.name==='height').value) * this.displayRect.height;
+            const width = node.widgets.find(w=>w.name==='width').value;
+            const height = node.widgets.find(w=>w.name==='height').value;
+            const rectX = this.displayRect.x + (zone.x / width) * this.displayRect.width;
+            const rectY = this.displayRect.y + (zone.y / height) * this.displayRect.height;
+            const rectW = (zone.width / width) * this.displayRect.width;
+            const rectH = (zone.height / height) * this.displayRect.height;
 
-            // Check resize handle first
             const handleX = rectX + rectW - this.RESIZE_HANDLE_SIZE;
             const handleY = rectY + rectH - this.RESIZE_HANDLE_SIZE;
-            if (x >= handleX && x <= handleX + this.RESIZE_HANDLE_SIZE && y >= handleY && y <= handleY + this.RESIZE_HANDLE_SIZE) {
+            if (this.selectedZone === zone && x >= handleX && x <= handleX + this.RESIZE_HANDLE_SIZE && y >= handleY && y <= handleY + this.RESIZE_HANDLE_SIZE) {
                 this.interaction = { type: 'resize', zone: zone, startPos: [...pos], startRect: { ...zone } };
-                this.selectedZone = zone;
                 node.setDirtyCanvas(true, true);
                 return true;
             }
 
-            // Check drag
             if (x >= rectX && x <= rectX + rectW && y >= rectY && y <= rectY + rectH) {
                 this.interaction = { type: 'drag', zone: zone, startPos: [...pos], startRect: { ...zone } };
                 this.selectedZone = zone;
@@ -155,6 +149,7 @@ class ZoneConditionerWidget extends HolafBaseWidget {
         }
 
         this.selectedZone = null;
+        this.interaction.type = null;
         node.setDirtyCanvas(true, true);
         return false;
     }
@@ -203,29 +198,18 @@ class ZoneConditionerWidget extends HolafBaseWidget {
     }
 
     computeSize(width) {
-        return [width, 256]; // Give it a fixed height
+        return [width, 256];
     }
 }
 
-
 app.registerExtension({
-    name: "Holaf.ZoneConditioner",
+    name: "Holaf.RegionalPrompter",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if (nodeData.name === 'HolafZoneConditioner') {
+        if (nodeData.name === 'HolafRegionalPrompter') {
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 onNodeCreated?.apply(this, arguments);
-                this.addCustomWidget(new ZoneConditionerWidget("zone_conditioner_widget", this));
-            };
-
-            // Hack to make the widget resizable, by tricking LiteGraph into thinking the bottom area is a resize handle
-            const getSlotMenuOptions = nodeType.prototype.getSlotMenuOptions;
-            nodeType.prototype.getSlotMenuOptions = function(slot) {
-                const options = getSlotMenuOptions?.apply(this, arguments) || [];
-                if (slot && slot.name === 'CONDITIONING' && slot.output) {
-                    options.push({ content: "Resize Node", callback: () => {} }); // Dummy option
-                }
-                return options;
+                this.addCustomWidget(new RegionalPrompterWidget("regional_prompter_widget", this));
             };
 
             Object.defineProperty(nodeType.prototype, "resizable", {
