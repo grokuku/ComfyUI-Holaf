@@ -37,7 +37,7 @@ from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 from .nodes.holaf_ratio_calculator import HolafRatioCalculator
-
+from .nodes.holaf_vertical_reroute import HolafVerticalReroute
 
 
 
@@ -61,7 +61,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafLutSaver": HolafLutSaver,
     "HolafMaskToBoolean": HolafMaskToBoolean,
     "HolafRatioCalculator": HolafRatioCalculator,
-
+    "HolafVerticalReroute": HolafVerticalReroute,
 
 }
 
@@ -85,7 +85,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafLutSaver": "LUT Saver (Holaf)",
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
     "HolafRatioCalculator": "Ratio Calculator (Holaf)",
-
+    "HolafVerticalReroute": "Vertical Reroute (Holaf)",
 
 }
 
