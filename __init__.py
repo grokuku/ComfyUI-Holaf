@@ -19,8 +19,6 @@ import sys
 import hashlib
 
 # Node class imports
-from .nodes.holaf_tile_calculator import HolafTileCalculator
-from .nodes.holaf_slice_calculator import HolafSliceCalculator
 from .nodes.holaf_save_image import HolafSaveImage
 from .nodes.holaf_tiled_ksampler import HolafTiledKSampler
 
@@ -29,9 +27,6 @@ from .nodes.holaf_image_comparer import HolafImageComparer
 from .nodes.holaf_upscale_image import UpscaleImageHolaf
 from .nodes.holaf_overlay import HolafOverlayNode
 from .nodes.holaf_resolution_preset import HolafResolutionPreset
-from .nodes.HolafBenchmarkRunner import HolafBenchmarkRunner
-from .nodes.HolafBenchmarkPlotter import HolafBenchmarkPlotter
-from .nodes.HolafBenchmarkLoader import HolafBenchmarkLoader
 from .nodes.holaf_instagram_resize import HolafInstagramResize
 from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_saver import HolafLutSaver
@@ -43,8 +38,6 @@ from .nodes.holaf_ratio_calculator import HolafRatioCalculator
 
 # Maps internal class names to the node's implementation.
 NODE_CLASS_MAPPINGS = {
-    "HolafTileCalculator": HolafTileCalculator,
-    "HolafSliceCalculator": HolafSliceCalculator,
     "HolafSaveImage": HolafSaveImage,
     "HolafTiledKSampler": HolafTiledKSampler,
 
@@ -53,9 +46,6 @@ NODE_CLASS_MAPPINGS = {
     "UpscaleImageHolaf": UpscaleImageHolaf,
     "HolafOverlayNode": HolafOverlayNode,
     "HolafResolutionPreset": HolafResolutionPreset,
-    "HolafBenchmarkRunner": HolafBenchmarkRunner,
-    "HolafBenchmarkPlotter": HolafBenchmarkPlotter,
-    "HolafBenchmarkLoader": HolafBenchmarkLoader,
     "HolafInstagramResize": HolafInstagramResize,
     "HolafLutGenerator": HolafLutGenerator,
     "HolafLutSaver": HolafLutSaver,
@@ -67,8 +57,6 @@ NODE_CLASS_MAPPINGS = {
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "HolafTileCalculator": "Tile Calculator (Holaf)",
-    "HolafSliceCalculator": "Slice Calculator (Holaf)",
     "HolafSaveImage": "Save Image (Holaf)",
     "HolafTiledKSampler": "Tiled KSampler (Holaf)",
 
@@ -77,9 +65,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UpscaleImageHolaf": "Upscale (Holaf)",
     "HolafOverlayNode": "Overlay (Holaf)",
     "HolafResolutionPreset": "Resolution Preset (Holaf)",
-    "HolafBenchmarkRunner": "Benchmark Runner (Holaf)",
-    "HolafBenchmarkPlotter": "Benchmark Plotter (Holaf)",
-    "HolafBenchmarkLoader": "Benchmark Loader (Holaf)",
     "HolafInstagramResize": "Instagram Resize (Holaf)",
     "HolafLutGenerator": "LUT Generator (Holaf)",
     "HolafLutSaver": "LUT Saver (Holaf)",

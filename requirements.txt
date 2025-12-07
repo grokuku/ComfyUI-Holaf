@@ -16,7 +16,4 @@
 numpy
 Pillow
 spandrel
-pandas
-matplotlib
-psutil
-imageio
+requests
