@@ -22,7 +22,7 @@ app.registerExtension({
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === HOLAF_BYPASSER_TYPE || nodeData.name === HOLAF_REMOTE_TYPE) {
-            
+
             // Hook into the node creation to setup listeners
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
@@ -33,25 +33,45 @@ app.registerExtension({
             };
 
             // Define the custom logic method attached to the node instance
-            nodeType.prototype.setupRemoteLogic = function() {
+            nodeType.prototype.setupRemoteLogic = function () {
                 // Find widgets
                 const groupWidget = this.widgets.find(w => w.name === "group_name");
-                // Back to looking for "active"
                 const activeWidget = this.widgets.find(w => w.name === "active");
 
                 if (!groupWidget || !activeWidget) return;
 
+                // --- FEATURE: DYNAMIC LABEL RENAMING ---
+                // 1. Helper function to update the label
+                const updateLabel = (text) => {
+                    activeWidget.label = text || "active"; // Fallback to "active" if empty
+                    this.setDirtyCanvas(true, true); // Force redraw
+                };
+
+                // 2. Set initial label on load
+                updateLabel(groupWidget.value);
+
+                // 3. Add listener to group_name changes
+                const originalGroupCallback = groupWidget.callback;
+                groupWidget.callback = (value) => {
+                    if (originalGroupCallback) originalGroupCallback(value);
+                    updateLabel(value);
+
+                    // Optional: If we change the group name, we might want to sync with the new group immediately?
+                    // For now, we just update the visual label.
+                };
+                // ---------------------------------------
+
                 // Callback when 'active' toggle is clicked
-                const originalCallback = activeWidget.callback;
+                const originalActiveCallback = activeWidget.callback;
                 activeWidget.callback = (value) => {
-                    if (originalCallback) originalCallback(value);
+                    if (originalActiveCallback) originalActiveCallback(value);
                     if (IS_SYNCING) return; // Stop recursion
-                    
+
                     const groupName = groupWidget.value;
-                    
+
                     // We start syncing from the root graph
                     this.syncGroupState(app.graph, groupName, value);
-                    
+
                     // Specific logic for Bypasser: Handle the upstream node
                     if (this.type === HOLAF_BYPASSER_TYPE) {
                         this.updateUpstreamNode(value);
@@ -60,16 +80,16 @@ app.registerExtension({
             };
 
             // Main function to sync all nodes in the same group (Recursive)
-            nodeType.prototype.syncGroupState = function(targetGraph, groupName, newState) {
+            nodeType.prototype.syncGroupState = function (targetGraph, groupName, newState) {
                 const wasSyncing = IS_SYNCING;
                 IS_SYNCING = true;
-                
+
                 try {
                     const traverse = (graph) => {
                         if (!graph || !graph._nodes) return;
 
                         for (const node of graph._nodes) {
-                            if (node === this) continue; 
+                            if (node === this) continue;
 
                             if (node.subgraph) {
                                 traverse(node.subgraph);
@@ -82,6 +102,12 @@ app.registerExtension({
                                 if (otherGroupWidget && otherActiveWidget) {
                                     if (otherGroupWidget.value === groupName) {
                                         otherActiveWidget.value = newState;
+
+                                        // --- FEATURE: SYNC VISUAL LABEL ---
+                                        // If the user hasn't renamed the other node manually (or if we want strict sync),
+                                        // we can also force the label update here, but usually, 
+                                        // nodes have the same group name so the label is already correct.
+                                        // We ensure the toggle state is synced:
 
                                         if (node.type === HOLAF_BYPASSER_TYPE) {
                                             node.updateUpstreamNode(newState);
@@ -102,7 +128,7 @@ app.registerExtension({
             };
 
             // Function to Bypass/Unbypass the parent node connected to 'original'
-            nodeType.prototype.updateUpstreamNode = function(isActive) {
+            nodeType.prototype.updateUpstreamNode = function (isActive) {
                 if (this.type !== HOLAF_BYPASSER_TYPE) return;
 
                 const originalInputIndex = this.findInputSlot("original");
@@ -112,8 +138,8 @@ app.registerExtension({
                 if (!inputData || !inputData.link) return;
 
                 const linkId = inputData.link;
-                
-                const graph = this.graph; 
+
+                const graph = this.graph;
                 if (!graph || !graph.links) return;
 
                 const link = graph.links[linkId];
@@ -122,14 +148,13 @@ app.registerExtension({
                 const upstreamNode = graph.getNodeById(link.origin_id);
                 if (!upstreamNode) return;
 
-                // LOGIC INVERTED HERE:
                 // Active ON (True) -> Node Mode = ALWAYS (0) -> It Works.
                 // Active OFF (False) -> Node Mode = BYPASS (4) -> It is skipped.
                 const targetMode = isActive ? MODE_ALWAYS : MODE_BYPASS;
 
                 if (upstreamNode.mode !== targetMode) {
                     upstreamNode.mode = targetMode;
-                    app.graph.change(); 
+                    app.graph.change();
                 }
             };
         }
