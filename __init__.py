@@ -32,8 +32,8 @@ from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 from .nodes.holaf_ratio_calculator import HolafRatioCalculator
-
-
+from .nodes.holaf_bypasser import HolafBypasser
+from .nodes.holaf_remote import HolafRemote
 
 
 # Maps internal class names to the node's implementation.
@@ -51,8 +51,8 @@ NODE_CLASS_MAPPINGS = {
     "HolafLutSaver": HolafLutSaver,
     "HolafMaskToBoolean": HolafMaskToBoolean,
     "HolafRatioCalculator": HolafRatioCalculator,
-
-
+    "HolafBypasser": HolafBypasser,
+    "HolafRemote": HolafRemote,
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
@@ -70,8 +70,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafLutSaver": "LUT Saver (Holaf)",
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
     "HolafRatioCalculator": "Ratio Calculator (Holaf)",
-
-
+    "HolafBypasser": "Bypasser (Holaf)",
+    "HolafRemote": "Remote (Holaf)",
 }
 
 # The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.
