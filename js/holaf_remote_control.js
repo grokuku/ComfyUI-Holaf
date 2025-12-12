@@ -7,13 +7,13 @@ import { app } from "../../scripts/app.js";
 
 // Constants
 const MODE_ALWAYS = 0;
+const MODE_MUTE = 2;
 const MODE_BYPASS = 4;
 
 const HOLAF_BYPASSER_TYPE = "HolafBypasser";
 const HOLAF_GROUP_BYPASSER_TYPE = "HolafGroupBypasser";
 const HOLAF_REMOTE_TYPE = "HolafRemote";
 
-// Flag to prevent infinite recursion
 let IS_SYNCING = false;
 
 app.registerExtension({
@@ -26,9 +26,9 @@ app.registerExtension({
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 if (onNodeCreated) onNodeCreated.apply(this, arguments);
+
                 this.setupRemoteLogic();
 
-                // Specific setup for Group Bypasser (Dropdown population)
                 if (this.type === HOLAF_GROUP_BYPASSER_TYPE) {
                     this.setupGroupSelector();
                 }
@@ -39,46 +39,63 @@ app.registerExtension({
             nodeType.prototype.onConfigure = function () {
                 if (onConfigure) onConfigure.apply(this, arguments);
 
+                // Fix Label
                 const groupWidget = this.widgets?.find(w => w.name === "group_name");
                 const activeWidget = this.widgets?.find(w => w.name === "active");
                 if (groupWidget && activeWidget) {
                     activeWidget.label = groupWidget.value || "active";
                 }
 
-                // For Bypasser, ensure we have dynamic slots if loaded from save
+                // Fix Dropdown if needed
+                if (this.type === HOLAF_GROUP_BYPASSER_TYPE) {
+                    // Try to populate immediately if graph is ready
+                    setTimeout(() => this.setupGroupSelector(), 100);
+                }
+
+                // Fix Dynamic Slots (Restore if connections exist or logic dictates)
                 if (this.type === HOLAF_BYPASSER_TYPE) {
-                    // Logic handled by onConnectionsChange mostly, but we ensure cleanliness
+                    // We need to delay slightly to let links be established in memory
+                    setTimeout(() => this.checkDynamicSlots(), 100);
                 }
             };
 
-            // --- 3. DYNAMIC INPUTS FOR BYPASSER ---
+            // --- 3. DYNAMIC INPUTS LISTENER ---
             if (nodeData.name === HOLAF_BYPASSER_TYPE) {
                 const onConnectionsChange = nodeType.prototype.onConnectionsChange;
                 nodeType.prototype.onConnectionsChange = function (type, index, connected, link_info, ...args) {
                     if (onConnectionsChange) onConnectionsChange.apply(this, [type, index, connected, link_info, ...args]);
 
-                    // Only care about Input connections (type 1)
-                    if (type !== 1) return;
+                    // Input type is 1
+                    if (type === 1) {
+                        this.checkDynamicSlots();
+                    }
+                };
 
-                    // Logic to add "other_bypass" slots
-                    // We check if the last "bypass" slot has a link. If yes, we add a new one.
-                    const inputs = this.inputs || [];
-                    const lastInput = inputs[inputs.length - 1];
+                // Logic to add slots
+                nodeType.prototype.checkDynamicSlots = function () {
+                    const originalSlot = this.findInputSlot("original");
 
-                    // Check if we need to ADD a slot
-                    if (lastInput && lastInput.link !== null) {
-                        // Add new slot
-                        const nextIndex = inputs.length - 2; // -2 because of original + alternative? No, names are dynamic.
-                        // Actually easier: just count how many "other_bypass" we have
-                        const bypassCount = inputs.filter(i => i.name.startsWith("other_bypass")).length;
-                        this.addInput(`other_bypass_${bypassCount + 1}`, "*");
+                    // 1. If 'original' is connected, ensure we have at least one 'other_bypass'
+                    if (originalSlot !== -1 && this.inputs[originalSlot].link !== null) {
+                        const hasBypassSlot = this.inputs.some(i => i.name.startsWith("other_bypass"));
+                        if (!hasBypassSlot) {
+                            this.addInput("other_bypass_1", "*");
+                        }
                     }
 
-                    // Logic to REMOVE trailing empty slots (optional, to keep it clean)
-                    // We iterate from end. If slot is empty AND it's an "other_bypass" AND the one before is empty too...
-                    // Let's keep it simple: Just ensure we always have exactly ONE empty "other_bypass" at the end.
-                    // (Skipped for now to avoid complexity/flickering, purely additive is safer).
-                };
+                    // 2. If the LAST 'other_bypass' slot is connected, add a new one
+                    const bypassInputs = this.inputs.filter(i => i.name.startsWith("other_bypass"));
+                    if (bypassInputs.length > 0) {
+                        const lastBypass = bypassInputs[bypassInputs.length - 1];
+                        if (lastBypass.link !== null) {
+                            const nextIndex = bypassInputs.length + 1;
+                            this.addInput(`other_bypass_${nextIndex}`, "*");
+                        }
+                    }
+
+                    // Resize node to fit new slots if needed
+                    this.setSize(this.computeSize());
+                }
             }
 
 
@@ -93,11 +110,12 @@ app.registerExtension({
                     activeWidget.label = text || "active";
                     this.setDirtyCanvas(true, true);
                 };
+
+                // Initial label setup
                 updateLabel(groupWidget.value);
 
-                groupWidget.callback = (value) => {
-                    updateLabel(value);
-                };
+                // Listeners
+                groupWidget.callback = (value) => { updateLabel(value); };
 
                 const originalActiveCallback = activeWidget.callback;
                 activeWidget.callback = (value) => {
@@ -106,30 +124,36 @@ app.registerExtension({
 
                     const groupName = groupWidget.value;
                     this.syncGroupState(app.graph, groupName, value);
-
-                    // Trigger specific logic for this node immediately
                     this.triggerBypassLogic(value);
                 };
             };
 
-            // --- GROUP SELECTOR LOGIC (Dropdown) ---
+            // --- GROUP SELECTOR LOGIC ---
             nodeType.prototype.setupGroupSelector = function () {
                 const comfyGroupWidget = this.widgets.find(w => w.name === "comfy_group");
                 if (!comfyGroupWidget) return;
 
-                // Convert text widget to Combo
+                // Force conversion to Combo
                 comfyGroupWidget.type = "combo";
-                comfyGroupWidget.options = { values: [] };
+                if (!comfyGroupWidget.options) comfyGroupWidget.options = {};
 
-                // Function to refresh the list of groups
                 const refreshGroups = () => {
                     const groups = app.graph._groups || [];
                     const names = groups.map(g => g.title).filter(t => t);
-                    names.unshift("None");
-                    comfyGroupWidget.options.values = names;
+                    // Keep existing value if valid, otherwise prepend None
+                    const values = ["None", ...names];
+                    comfyGroupWidget.options.values = values;
+
+                    // If current value is invalid/empty, set to None
+                    if (!comfyGroupWidget.value || !values.includes(comfyGroupWidget.value)) {
+                        comfyGroupWidget.value = "None";
+                    }
                 };
 
-                // Refresh on mouse enter to ensure list is up to date
+                // Initial refresh
+                refreshGroups();
+
+                // Refresh on interaction (Mouse Enter) to catch new groups created by user
                 this.onMouseEnter = function (e) {
                     refreshGroups();
                 };
@@ -165,7 +189,7 @@ app.registerExtension({
                 }
             };
 
-            // --- TRIGGER LOGIC (Dispatcher) ---
+            // --- TRIGGER LOGIC ---
             nodeType.prototype.triggerBypassLogic = function (isActive) {
                 if (this.type === HOLAF_BYPASSER_TYPE) {
                     this.handleStandardBypass(isActive);
@@ -174,30 +198,33 @@ app.registerExtension({
                 }
             };
 
-            // --- LOGIC 1: STANDARD BYPASSER (Inputs based) ---
+            // --- LOGIC 1: STANDARD BYPASSER ---
             nodeType.prototype.handleStandardBypass = function (isActive) {
+                // By default for standard bypasser, we use BYPASS mode (purple)
+                // Active = ON (True) -> Mode Always
+                // Active = OFF (False) -> Mode Bypass
                 const targetMode = isActive ? MODE_ALWAYS : MODE_BYPASS;
                 const graph = this.graph;
                 if (!graph) return;
 
-                // Helper to update a link
                 const updateLink = (linkId) => {
                     if (!linkId) return;
                     const link = graph.links[linkId];
                     if (!link) return;
                     const node = graph.getNodeById(link.origin_id);
+                    // Only update if changed to avoid loop
                     if (node && node.mode !== targetMode) {
                         node.mode = targetMode;
                     }
                 };
 
-                // Check 'original'
+                // Original input
                 const originalSlot = this.findInputSlot("original");
                 if (originalSlot !== -1 && this.inputs[originalSlot].link) {
                     updateLink(this.inputs[originalSlot].link);
                 }
 
-                // Check all dynamic 'other_bypass_X'
+                // Dynamic inputs
                 if (this.inputs) {
                     for (const input of this.inputs) {
                         if (input.name && input.name.startsWith("other_bypass")) {
@@ -208,35 +235,38 @@ app.registerExtension({
                 app.graph.change();
             };
 
-            // --- LOGIC 2: GROUP BYPASSER (Visual Group based) ---
+            // --- LOGIC 2: GROUP BYPASSER (Updated with Mode Selection) ---
             nodeType.prototype.handleGroupBypass = function (isActive) {
                 const comfyGroupWidget = this.widgets.find(w => w.name === "comfy_group");
+                const modeWidget = this.widgets.find(w => w.name === "bypass_mode");
+
                 if (!comfyGroupWidget || !comfyGroupWidget.value || comfyGroupWidget.value === "None") return;
 
                 const targetGroupName = comfyGroupWidget.value;
-                const graph = this.graph; // Use local graph (subgraph safe)
+                const graph = this.graph;
 
-                // Find the visual group object
                 const visualGroup = graph._groups.find(g => g.title === targetGroupName);
                 if (!visualGroup) return;
 
-                const targetMode = isActive ? MODE_ALWAYS : MODE_BYPASS;
+                // Determine Mode: Mute (2) or Bypass (4)
+                // If widget is missing (old version), default to Bypass
+                let inactiveMode = MODE_BYPASS;
+                if (modeWidget && modeWidget.value === "Mute") {
+                    inactiveMode = MODE_MUTE;
+                }
 
-                // Bounding box check
+                const targetMode = isActive ? MODE_ALWAYS : inactiveMode;
+
                 const gX = visualGroup.pos[0];
                 const gY = visualGroup.pos[1];
                 const gW = visualGroup.size[0];
                 const gH = visualGroup.size[1];
 
-                // Iterate over all nodes in this graph
                 for (const node of graph._nodes) {
-                    // Skip self and other controllers to avoid recursion or disabling the controller itself!
                     if (node.id === this.id) continue;
                     if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE].includes(node.type)) continue;
 
-                    // Check if node center is inside group
-                    // Or top-left? Usually Comfy uses "is contained".
-                    // Let's check if the node's position is strictly inside the group rect.
+                    // Check containment
                     if (node.pos[0] >= gX && node.pos[0] <= gX + gW &&
                         node.pos[1] >= gY && node.pos[1] <= gY + gH) {
 
