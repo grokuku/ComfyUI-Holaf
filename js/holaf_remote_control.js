@@ -23,13 +23,27 @@ app.registerExtension({
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === HOLAF_BYPASSER_TYPE || nodeData.name === HOLAF_REMOTE_TYPE) {
 
-            // Hook into the node creation to setup listeners
+            // --- 1. SETUP LOGIC ON CREATION ---
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 if (onNodeCreated) {
                     onNodeCreated.apply(this, arguments);
                 }
                 this.setupRemoteLogic();
+            };
+
+            // --- 2. UPDATE LABEL ON LOAD (Fix for "Group A" issue) ---
+            const onConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function () {
+                if (onConfigure) {
+                    onConfigure.apply(this, arguments);
+                }
+                // Once configuration is loaded, force the label update
+                const groupWidget = this.widgets?.find(w => w.name === "group_name");
+                const activeWidget = this.widgets?.find(w => w.name === "active");
+                if (groupWidget && activeWidget) {
+                    activeWidget.label = groupWidget.value || "active";
+                }
             };
 
             // Define the custom logic method attached to the node instance
@@ -40,39 +54,33 @@ app.registerExtension({
 
                 if (!groupWidget || !activeWidget) return;
 
-                // --- FEATURE: DYNAMIC LABEL RENAMING ---
-                // 1. Helper function to update the label
+                // Helper function to update the label
                 const updateLabel = (text) => {
-                    activeWidget.label = text || "active"; // Fallback to "active" if empty
-                    this.setDirtyCanvas(true, true); // Force redraw
+                    activeWidget.label = text || "active";
+                    this.setDirtyCanvas(true, true);
                 };
 
-                // 2. Set initial label on load
+                // Initial update (for new nodes created manually)
                 updateLabel(groupWidget.value);
 
-                // 3. Add listener to group_name changes
+                // Add listener to group_name changes
                 const originalGroupCallback = groupWidget.callback;
                 groupWidget.callback = (value) => {
                     if (originalGroupCallback) originalGroupCallback(value);
                     updateLabel(value);
-
-                    // Optional: If we change the group name, we might want to sync with the new group immediately?
-                    // For now, we just update the visual label.
                 };
-                // ---------------------------------------
 
                 // Callback when 'active' toggle is clicked
                 const originalActiveCallback = activeWidget.callback;
                 activeWidget.callback = (value) => {
                     if (originalActiveCallback) originalActiveCallback(value);
-                    if (IS_SYNCING) return; // Stop recursion
+                    if (IS_SYNCING) return;
 
                     const groupName = groupWidget.value;
 
                     // We start syncing from the root graph
                     this.syncGroupState(app.graph, groupName, value);
 
-                    // Specific logic for Bypasser: Handle the upstream node
                     if (this.type === HOLAF_BYPASSER_TYPE) {
                         this.updateUpstreamNode(value);
                     }
@@ -103,11 +111,8 @@ app.registerExtension({
                                     if (otherGroupWidget.value === groupName) {
                                         otherActiveWidget.value = newState;
 
-                                        // --- FEATURE: SYNC VISUAL LABEL ---
-                                        // If the user hasn't renamed the other node manually (or if we want strict sync),
-                                        // we can also force the label update here, but usually, 
-                                        // nodes have the same group name so the label is already correct.
-                                        // We ensure the toggle state is synced:
+                                        // Also update visual label if needed (though usually synced by name)
+                                        // otherActiveWidget.label = groupName; 
 
                                         if (node.type === HOLAF_BYPASSER_TYPE) {
                                             node.updateUpstreamNode(newState);
@@ -148,8 +153,8 @@ app.registerExtension({
                 const upstreamNode = graph.getNodeById(link.origin_id);
                 if (!upstreamNode) return;
 
-                // Active ON (True) -> Node Mode = ALWAYS (0) -> It Works.
-                // Active OFF (False) -> Node Mode = BYPASS (4) -> It is skipped.
+                // Active ON (True) -> Node Mode = ALWAYS (0)
+                // Active OFF (False) -> Node Mode = BYPASS (4)
                 const targetMode = isActive ? MODE_ALWAYS : MODE_BYPASS;
 
                 if (upstreamNode.mode !== targetMode) {
