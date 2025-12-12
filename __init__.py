@@ -33,6 +33,7 @@ from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 from .nodes.holaf_ratio_calculator import HolafRatioCalculator
 from .nodes.holaf_bypasser import HolafBypasser
+from .nodes.holaf_group_bypasser import HolafGroupBypasser
 from .nodes.holaf_remote import HolafRemote
 
 
@@ -52,6 +53,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafMaskToBoolean": HolafMaskToBoolean,
     "HolafRatioCalculator": HolafRatioCalculator,
     "HolafBypasser": HolafBypasser,
+    "HolafGroupBypasser": HolafGroupBypasser,
     "HolafRemote": HolafRemote,
 }
 
@@ -71,6 +73,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
     "HolafRatioCalculator": "Ratio Calculator (Holaf)",
     "HolafBypasser": "Bypasser (Holaf)",
+    "HolafGroupBypasser": "Group Bypasser (Holaf)",
     "HolafRemote": "Remote (Holaf)",
 }
 
