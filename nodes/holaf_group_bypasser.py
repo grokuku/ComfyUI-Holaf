@@ -8,10 +8,12 @@ class HolafGroupBypasser:
     def INPUT_TYPES(s):
         return {
             "required": {
-                # This string will be converted to a Combo box by JavaScript
-                "comfy_group": ("STRING", {"default": "None"}), 
+                # CHANGEMENT ICI : En mettant une liste entre crochets, 
+                # ComfyUI crée nativement une Dropdown List.
+                "comfy_group": (["None"],), 
                 "group_name": ("STRING", {"default": "Group A"}),
                 "active": ("BOOLEAN", {"default": True, "label_on": "ON", "label_off": "OFF"}),
+                "bypass_mode": (["Bypass", "Mute"],),
             },
             "optional": {
                 "original": (ANY_TYPE,),
@@ -24,7 +26,7 @@ class HolafGroupBypasser:
     FUNCTION = "process"
     CATEGORY = "holaf"
 
-    def process(self, comfy_group, group_name, active, original=None, alternative=None):
+    def process(self, comfy_group, group_name, active, bypass_mode, original=None, alternative=None):
         if active:
             return (original,)
         else:
