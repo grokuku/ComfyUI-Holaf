@@ -25,28 +25,32 @@ app.registerExtension({
                 }
             };
 
+            // Restore state on load (Crucial for correct labels after reload)
+            const onConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function () {
+                if (onConfigure) onConfigure.apply(this, arguments);
+                
+                if (this.type === HOLAF_SHORTCUT_USER_TYPE) {
+                    // Update the button label immediately after loading values
+                    this.updateJumpButtonLabel();
+                }
+            };
+
             // --- 1. SHORTCUT NODE (Anchor) ---
             nodeType.prototype.setupShortcutNode = function() {
-                // Initialize properties to store view data if not exists
                 if (!this.properties) this.properties = {};
                 if (!this.properties.saved_view) {
                     this.properties.saved_view = null;
                 }
 
-                // Add "Save Position" Button
                 this.addWidget("button", "📍 Save Position", null, (widget, canvas, node, pos, event) => {
                     const ds = app.canvas.ds;
-                    
-                    // We save the current scale and offset directly.
-                    // This captures exactly what the user is seeing.
                     const viewData = {
                         scale: ds.scale,
-                        offset: [...ds.offset] // Clone array to avoid reference issues
+                        offset: [...ds.offset]
                     };
-                    
                     this.properties.saved_view = viewData;
                     
-                    // Visual feedback (change button text temporarily)
                     const originalName = widget.name;
                     widget.name = "✅ Saved!";
                     this.setDirtyCanvas(true, true);
@@ -59,10 +63,44 @@ app.registerExtension({
 
             // --- 2. USER NODE (Remote) ---
             nodeType.prototype.setupUserNode = function() {
-                // Add "Jump" Button
+                // Create the button with a default name
                 this.addWidget("button", "🚀 Jump", null, (widget, canvas, node, pos, event) => {
                     this.triggerJump();
                 });
+
+                // Setup listener for dynamic renaming
+                const targetWidget = this.widgets.find(w => w.name === "target_shortcut");
+                if (targetWidget) {
+                    const originalCallback = targetWidget.callback;
+                    targetWidget.callback = (value) => {
+                        if (originalCallback) originalCallback(value);
+                        // Update button label when text changes
+                        this.updateJumpButtonLabel(value);
+                    };
+                }
+                
+                // Initial update on creation
+                this.updateJumpButtonLabel();
+            };
+
+            // Helper to rename the button based on input value
+            nodeType.prototype.updateJumpButtonLabel = function(newValue) {
+                const targetWidget = this.widgets.find(w => w.name === "target_shortcut");
+                const jumpBtn = this.widgets.find(w => w.type === "button"); // Find the jump button
+                
+                if (targetWidget && jumpBtn) {
+                    // Use provided value or current widget value
+                    const name = newValue || targetWidget.value || "???";
+                    
+                    // Update the button name to be explicit
+                    // "🚀 Jump to Step 1"
+                    const newName = `🚀 Jump to ${name}`;
+                    
+                    if (jumpBtn.name !== newName) {
+                        jumpBtn.name = newName;
+                        this.setDirtyCanvas(true, true);
+                    }
+                }
             };
 
             // Logic to perform the jump
@@ -73,8 +111,8 @@ app.registerExtension({
                 const targetName = targetWidget.value;
                 const graph = app.graph;
 
-                // Find the target node
                 let targetNode = null;
+                // Search for anchor node
                 for (const node of graph._nodes) {
                     if (node.type === HOLAF_SHORTCUT_TYPE) {
                         const nameWidget = node.widgets.find(w => w.name === "shortcut_name");
@@ -88,7 +126,6 @@ app.registerExtension({
                 if (targetNode) {
                     const savedView = targetNode.properties?.saved_view;
                     if (savedView) {
-                        // Apply view
                         app.canvas.ds.scale = savedView.scale;
                         app.canvas.ds.offset = [...savedView.offset];
                         app.canvas.setDirty(true, true);
