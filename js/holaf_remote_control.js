@@ -29,7 +29,6 @@ app.registerExtension({
                 if (onNodeCreated) {
                     onNodeCreated.apply(this, arguments);
                 }
-
                 this.setupRemoteLogic();
             };
 
@@ -48,50 +47,66 @@ app.registerExtension({
                     if (IS_SYNCING) return; // Stop recursion
 
                     const groupName = groupWidget.value;
-                    this.syncGroupState(groupName, value);
+
+                    // We start syncing from the root graph, but the function handles recursion
+                    this.syncGroupState(app.graph, groupName, value);
 
                     // Specific logic for Bypasser: Handle the upstream node
                     if (this.type === HOLAF_BYPASSER_TYPE) {
                         this.updateUpstreamNode(value);
                     }
                 };
-
-                // Callback when 'group_name' changes (optional: sync immediately to new group state?)
-                // For now, we just let it change. If user toggles active, it will affect the new group.
             };
 
-            // Main function to sync all nodes in the same group
-            nodeType.prototype.syncGroupState = function (groupName, newState) {
+            // Main function to sync all nodes in the same group (Recursive)
+            nodeType.prototype.syncGroupState = function (targetGraph, groupName, newState) {
+                // Only set flag if we are at the root call to avoid blocking nested calls if implemented poorly,
+                // but here we just set it once globally.
+                const wasSyncing = IS_SYNCING;
                 IS_SYNCING = true;
+
                 try {
-                    const graph = app.graph;
-                    for (const node of graph._nodes) {
-                        if (node.id === this.id) continue; // Skip self
+                    // Internal traversal function
+                    const traverse = (graph) => {
+                        if (!graph || !graph._nodes) return;
 
-                        if (node.type === HOLAF_BYPASSER_TYPE || node.type === HOLAF_REMOTE_TYPE) {
-                            const otherGroupWidget = node.widgets.find(w => w.name === "group_name");
-                            const otherActiveWidget = node.widgets.find(w => w.name === "active");
+                        for (const node of graph._nodes) {
+                            // Skip self by object reference to avoid infinite loops on the trigger node
+                            if (node === this) continue;
 
-                            if (otherGroupWidget && otherActiveWidget) {
-                                if (otherGroupWidget.value === groupName) {
-                                    // Update value without firing callback recursively? 
-                                    // Actually we WANT to fire callback for Bypasser to update upstream, 
-                                    // but we blocked recursion via IS_SYNCING.
-                                    // However, modifying .value directly doesn't fire callback.
+                            // --- CASE 1: The node is a Subgraph / Group Node ---
+                            // If the node has a 'subgraph' property, we must dive into it.
+                            if (node.subgraph) {
+                                traverse(node.subgraph);
+                            }
 
-                                    otherActiveWidget.value = newState;
+                            // --- CASE 2: The node is a Holaf Target ---
+                            if (node.type === HOLAF_BYPASSER_TYPE || node.type === HOLAF_REMOTE_TYPE) {
+                                const otherGroupWidget = node.widgets.find(w => w.name === "group_name");
+                                const otherActiveWidget = node.widgets.find(w => w.name === "active");
 
-                                    // If the other node is a Bypasser, we must manually trigger its upstream logic
-                                    // because we are bypassing the widget callback via direct assignment (or if we called callback, IS_SYNCING blocks it).
-                                    if (node.type === HOLAF_BYPASSER_TYPE) {
-                                        node.updateUpstreamNode(newState);
+                                if (otherGroupWidget && otherActiveWidget) {
+                                    if (otherGroupWidget.value === groupName) {
+                                        otherActiveWidget.value = newState;
+
+                                        // If the other node is a Bypasser, trigger its upstream logic
+                                        if (node.type === HOLAF_BYPASSER_TYPE) {
+                                            // Ensure we call it within the context of that specific node
+                                            node.updateUpstreamNode(newState);
+                                        }
                                     }
                                 }
                             }
                         }
+                    };
+
+                    // Start traversal from the provided graph (usually app.graph)
+                    if (!wasSyncing) {
+                        traverse(targetGraph);
                     }
+
                 } finally {
-                    IS_SYNCING = false;
+                    if (!wasSyncing) IS_SYNCING = false;
                 }
             };
 
@@ -108,24 +123,26 @@ app.registerExtension({
                 if (!inputData || !inputData.link) return;
 
                 const linkId = inputData.link;
-                const link = app.graph.links[linkId];
+
+                // CRITICAL FIX FOR SUBGRAPHS:
+                // Use 'this.graph' instead of 'app.graph' to find links. 
+                // Inside a subgraph, the links belong to the subgraph, not the main app graph.
+                const graph = this.graph;
+                if (!graph || !graph.links) return;
+
+                const link = graph.links[linkId];
                 if (!link) return;
 
-                const upstreamNode = app.graph.getNodeById(link.origin_id);
+                const upstreamNode = graph.getNodeById(link.origin_id);
                 if (!upstreamNode) return;
-
-                // LOGIC:
-                // If Remote is ACTIVE (True) -> We are using the ALTERNATIVE path.
-                // This means the ORIGINAL path is NOT needed.
-                // So we set the Upstream Node to BYPASS (or MUTE).
-                // User requested: "Active -> node parent reliée a l'entrée anything soit bypass"
 
                 const targetMode = isActive ? MODE_BYPASS : MODE_ALWAYS;
 
                 if (upstreamNode.mode !== targetMode) {
                     upstreamNode.mode = targetMode;
 
-                    // Visually update the graph to show the change (graying out/bypassing)
+                    // Visually update the graph (requires finding the canvas for that graph usually, 
+                    // but app.graph.change() usually triggers a global redraw).
                     app.graph.change();
                 }
             };
