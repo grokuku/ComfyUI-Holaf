@@ -36,19 +36,20 @@ app.registerExtension({
             nodeType.prototype.setupRemoteLogic = function () {
                 // Find widgets
                 const groupWidget = this.widgets.find(w => w.name === "group_name");
-                const activeWidget = this.widgets.find(w => w.name === "active");
+                // UPDATED: Look for "bypass" instead of "active"
+                const bypassWidget = this.widgets.find(w => w.name === "bypass");
 
-                if (!groupWidget || !activeWidget) return;
+                if (!groupWidget || !bypassWidget) return;
 
-                // Callback when 'active' toggle is clicked
-                const originalActiveCallback = activeWidget.callback;
-                activeWidget.callback = (value) => {
-                    if (originalActiveCallback) originalActiveCallback(value);
+                // Callback when 'bypass' toggle is clicked
+                const originalCallback = bypassWidget.callback;
+                bypassWidget.callback = (value) => {
+                    if (originalCallback) originalCallback(value);
                     if (IS_SYNCING) return; // Stop recursion
 
                     const groupName = groupWidget.value;
 
-                    // We start syncing from the root graph, but the function handles recursion
+                    // We start syncing from the root graph
                     this.syncGroupState(app.graph, groupName, value);
 
                     // Specific logic for Bypasser: Handle the upstream node
@@ -60,38 +61,29 @@ app.registerExtension({
 
             // Main function to sync all nodes in the same group (Recursive)
             nodeType.prototype.syncGroupState = function (targetGraph, groupName, newState) {
-                // Only set flag if we are at the root call to avoid blocking nested calls if implemented poorly,
-                // but here we just set it once globally.
                 const wasSyncing = IS_SYNCING;
                 IS_SYNCING = true;
 
                 try {
-                    // Internal traversal function
                     const traverse = (graph) => {
                         if (!graph || !graph._nodes) return;
 
                         for (const node of graph._nodes) {
-                            // Skip self by object reference to avoid infinite loops on the trigger node
                             if (node === this) continue;
 
-                            // --- CASE 1: The node is a Subgraph / Group Node ---
-                            // If the node has a 'subgraph' property, we must dive into it.
                             if (node.subgraph) {
                                 traverse(node.subgraph);
                             }
 
-                            // --- CASE 2: The node is a Holaf Target ---
                             if (node.type === HOLAF_BYPASSER_TYPE || node.type === HOLAF_REMOTE_TYPE) {
                                 const otherGroupWidget = node.widgets.find(w => w.name === "group_name");
-                                const otherActiveWidget = node.widgets.find(w => w.name === "active");
+                                const otherBypassWidget = node.widgets.find(w => w.name === "bypass"); // UPDATED name
 
-                                if (otherGroupWidget && otherActiveWidget) {
+                                if (otherGroupWidget && otherBypassWidget) {
                                     if (otherGroupWidget.value === groupName) {
-                                        otherActiveWidget.value = newState;
+                                        otherBypassWidget.value = newState;
 
-                                        // If the other node is a Bypasser, trigger its upstream logic
                                         if (node.type === HOLAF_BYPASSER_TYPE) {
-                                            // Ensure we call it within the context of that specific node
                                             node.updateUpstreamNode(newState);
                                         }
                                     }
@@ -100,7 +92,6 @@ app.registerExtension({
                         }
                     };
 
-                    // Start traversal from the provided graph (usually app.graph)
                     if (!wasSyncing) {
                         traverse(targetGraph);
                     }
@@ -111,11 +102,9 @@ app.registerExtension({
             };
 
             // Function to Bypass/Unbypass the parent node connected to 'original'
-            nodeType.prototype.updateUpstreamNode = function (isActive) {
-                // Only for Bypasser nodes
+            nodeType.prototype.updateUpstreamNode = function (isBypassActive) {
                 if (this.type !== HOLAF_BYPASSER_TYPE) return;
 
-                // Find the input slot named "original"
                 const originalInputIndex = this.findInputSlot("original");
                 if (originalInputIndex === -1) return;
 
@@ -124,9 +113,6 @@ app.registerExtension({
 
                 const linkId = inputData.link;
 
-                // CRITICAL FIX FOR SUBGRAPHS:
-                // Use 'this.graph' instead of 'app.graph' to find links. 
-                // Inside a subgraph, the links belong to the subgraph, not the main app graph.
                 const graph = this.graph;
                 if (!graph || !graph.links) return;
 
@@ -136,13 +122,13 @@ app.registerExtension({
                 const upstreamNode = graph.getNodeById(link.origin_id);
                 if (!upstreamNode) return;
 
-                const targetMode = isActive ? MODE_BYPASS : MODE_ALWAYS;
+                // LOGIC:
+                // Bypass ON (True) -> Target Node Mode = BYPASS (4)
+                // Bypass OFF (False) -> Target Node Mode = ALWAYS (0)
+                const targetMode = isBypassActive ? MODE_BYPASS : MODE_ALWAYS;
 
                 if (upstreamNode.mode !== targetMode) {
                     upstreamNode.mode = targetMode;
-
-                    // Visually update the graph (requires finding the canvas for that graph usually, 
-                    // but app.graph.change() usually triggers a global redraw).
                     app.graph.change();
                 }
             };

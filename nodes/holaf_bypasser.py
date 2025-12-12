@@ -22,7 +22,7 @@ class HolafBypasser:
         return {
             "required": {
                 "group_name": ("STRING", {"default": "Group A"}),
-                "active": ("BOOLEAN", {"default": False, "label_on": "Active", "label_off": "Inactive"}),
+                "bypass": ("BOOLEAN", {"default": False, "label_on": "ON", "label_off": "OFF"}),
             },
             "optional": {
                 "original": (ANY_TYPE,),
@@ -35,14 +35,13 @@ class HolafBypasser:
     FUNCTION = "process"
     CATEGORY = "holaf"
 
-    def process(self, group_name, active, original=None, alternative=None):
+    def process(self, group_name, bypass, original=None, alternative=None):
         # Note: The actual "bypassing" of the upstream node happens in JavaScript.
         # This backend logic simply routes the correct data downstream.
         
-        if active:
-            # If active, we return the alternative data
-            # If alternative is not connected, we return None (or original as fallback? usually None)
+        if bypass:
+            # If bypass is ON (True), we return the alternative data
             return (alternative,)
         else:
-            # If inactive (default state), we pass the original data through
+            # If bypass is OFF (False - default), we pass the original data through
             return (original,)
