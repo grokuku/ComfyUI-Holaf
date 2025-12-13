@@ -7,25 +7,20 @@ import folder_paths
 
 class HolafLoadImageVideo:
     """
-    Node unifiée: Charge Images et Vidéos.
-    - Preview animé pour les vidéos.
-    - Supporte tous les formats via OpenCV et PIL.
+    Node unifiée : Charge Images et Vidéos.
+    - Force le preview animé (WebP léger).
+    - Supporte MP4, WEBM, GIF, etc.
     """
     
     @classmethod
     def INPUT_TYPES(s):
         input_dir = folder_paths.get_input_directory()
-        # On liste tout, sans filtre d'extension strict ici, on laisse le JS gérer le filtre visuel
         files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
         files.sort()
         
         return {
             "required": {
                 "media_file": (sorted(files), {"image_upload": True}),
-            },
-            "optional": {
-                 # Force rate permet de controler la vitesse de lecture si besoin, mais caché par défaut
-                 "force_rate": ("INT", {"default": 0, "min": 0, "max": 60, "step": 1}),
             }
         }
 
@@ -34,10 +29,13 @@ class HolafLoadImageVideo:
     FUNCTION = "load_media"
     OUTPUT_NODE = False
 
-    def load_media(self, media_file, force_rate=0):
+    def load_media(self, media_file):
         image_path = folder_paths.get_annotated_filepath(media_file)
         
-        # Validation du fichier
+        # LOG DE DEBUG
+        print(f"🎥 HolafLoad: Tentative de chargement de {media_file}")
+        print(f"   -> Chemin absolu : {image_path}")
+        
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Fichier introuvable: {image_path}")
 
@@ -58,7 +56,7 @@ class HolafLoadImageVideo:
 
         i = ImageOps.exif_transpose(i)
         
-        # Gestion GIF animé -> Séquence d'images
+        # Gestion GIF animé
         if getattr(i, 'is_animated', False):
             frames = []
             for frame in ImageSequence.Iterator(i):
@@ -66,10 +64,8 @@ class HolafLoadImageVideo:
                 frame = np.array(frame).astype(np.float32) / 255.0
                 frames.append(frame)
             image = torch.from_numpy(np.stack(frames))
-            # Masque vide pour GIF
             mask = torch.zeros((len(frames), i.height, i.width), dtype=torch.float32, device="cpu")
         else:
-            # Image statique
             image = i.convert("RGB")
             image = np.array(image).astype(np.float32) / 255.0
             image = torch.from_numpy(image)[None,]
@@ -86,20 +82,24 @@ class HolafLoadImageVideo:
         }
 
     def _load_video(self, video_path, filename):
-        # Utilisation de chemin absolu pour OpenCV
-        abs_path = os.path.abspath(video_path)
-        cap = cv2.VideoCapture(abs_path)
+        cap = cv2.VideoCapture(video_path)
         
         if not cap.isOpened():
-            raise ValueError(f"Impossible d'ouvrir la vidéo (codec ou chemin) : {abs_path}")
+            # Fallback : parfois OpenCV a besoin du chemin absolu normalisé
+            abs_path = os.path.abspath(video_path)
+            cap = cv2.VideoCapture(abs_path)
+            if not cap.isOpened():
+                raise ValueError(f"CRITIQUE: Impossible d'ouvrir la vidéo. Vérifiez les codecs ou le chemin.\nPath: {video_path}")
 
         frames = []
         preview_frames = []
         
-        # Paramètres pour le preview animé (on ne garde pas toutes les frames pour l'UI si c'est trop lourd)
-        total_frames_est = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        # On vise environ 50 frames max pour le preview pour garder l'UI fluide
-        preview_step = max(1, total_frames_est // 50) 
+        # On limite le nombre de frames pour le PREVIEW seulement (pour qu'il reste fluide)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0: total_frames = 100 # Valeur par défaut si lecture impossible
+        
+        # On garde max 60 frames pour le preview
+        preview_step = max(1, total_frames // 60)
         
         count = 0
         try:
@@ -111,11 +111,11 @@ class HolafLoadImageVideo:
                 # BGR -> RGB
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Gestion du preview
+                # Ajout au preview (redimensionné plus tard)
                 if count % preview_step == 0:
                     preview_frames.append(frame)
 
-                # Normalisation pour le tenseur de sortie (Lourd)
+                # Ajout au résultat final (Pleine résolution)
                 frame_norm = frame.astype(np.float32) / 255.0
                 frames.append(frame_norm)
                 
@@ -124,14 +124,15 @@ class HolafLoadImageVideo:
             cap.release()
 
         if not frames:
-            raise ValueError("Erreur : La vidéo semble vide ou illisible.")
+            raise ValueError("La vidéo a été ouverte mais aucune frame n'a été lue.")
 
-        # Création du tenseur de sortie
+        print(f"✅ Vidéo chargée: {len(frames)} frames.")
+
         output_image = torch.from_numpy(np.stack(frames))
         b, h, w, c = output_image.shape
         output_mask = torch.zeros((b, h, w), dtype=torch.float32, device="cpu")
 
-        # Génération du preview animé
+        # Génération du preview animé OPTIMISÉ
         if preview_frames:
             preview_filename = f"preview_{os.path.basename(filename)}.webp"
             self._save_animated_preview(preview_frames, preview_filename)
@@ -143,22 +144,26 @@ class HolafLoadImageVideo:
         
         return {"result": (output_image, output_mask)}
 
-    def _save_animated_preview(self, frames_list_np, filename):
-        """Sauvegarde un WebP animé dans le dossier temp"""
+    def _save_animated_preview(self, frames_list_np, filename, max_size=512):
+        """Sauvegarde un WebP animé REDIMENSIONNÉ (Thumbnail)"""
         temp_dir = folder_paths.get_temp_directory()
         save_path = os.path.join(temp_dir, filename)
         
-        pil_frames = [Image.fromarray(f) for f in frames_list_np]
+        pil_frames = []
+        for f in frames_list_np:
+            img = Image.fromarray(f)
+            # Redimensionnement proportionnel pour le preview
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            pil_frames.append(img)
         
-        # Sauvegarde en WebP animé (léger et supporté par Comfy)
-        # Duration = ms par frame. 33ms ~ 30fps.
+        # Sauvegarde (duration=33ms => ~30fps)
         pil_frames[0].save(
             save_path,
             format='WEBP',
             save_all=True,
             append_images=pil_frames[1:],
-            duration=50, 
+            duration=33, 
             loop=0,
-            quality=80,
+            quality=75,
             method=4
         )
