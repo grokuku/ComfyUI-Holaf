@@ -17,3 +17,4 @@ numpy
 Pillow
 spandrel
 requests
+opencv-python

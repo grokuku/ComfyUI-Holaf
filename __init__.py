@@ -37,6 +37,7 @@ from .nodes.holaf_group_bypasser import HolafGroupBypasser
 from .nodes.holaf_remote import HolafRemote
 from .nodes.holaf_shortcut import HolafShortcut
 from .nodes.holaf_shortcut_user import HolafShortcutUser
+from .nodes.holaf_load_image_video import HolafLoadImageVideo
 
 
 # Maps internal class names to the node's implementation.
@@ -59,6 +60,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafRemote": HolafRemote,
     "HolafShortcut": HolafShortcut,
     "HolafShortcutUser": HolafShortcutUser,
+    "HolafLoadImageVideo": HolafLoadImageVideo,
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
@@ -81,6 +83,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafRemote": "Remote (Holaf)",
     "HolafShortcut": "Shortcut (Holaf)",
     "HolafShortcutUser": "Shortcut User (Holaf)",
+    "HolafLoadImageVideo": "Load Image/Video (Holaf)",
 }
 
 # The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.

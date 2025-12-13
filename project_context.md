@@ -128,7 +128,8 @@
     ## 5. État Actuel
 
     *   **État Actuel :**
-        Le projet est une collection d'outils utilitaires ("Swiss Army Knife") pour ComfyUI. Le code est fonctionnel.
+        Le projet est une collection d'outils utilitaires ("Swiss Army Knife") pour ComfyUI.
+        Le système de **Group Bypasser** a été renforcé pour gérer l'évaluation paresseuse (`check_lazy_status`) et pour contourner la validation stricte des listes dynamiques de ComfyUI (utilisation du type `STRING` côté backend + injection UI JS).
         
     *   **Points d'Attention :**
         1.  **Fonctionnalités Réseau :** Le `Tiled KSampler` contient du code pour communiquer avec un orchestrateur (`requests`), mais le code du serveur orchestrateur n'est pas inclus dans ce package.
