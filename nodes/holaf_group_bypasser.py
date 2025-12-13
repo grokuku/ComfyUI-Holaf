@@ -8,9 +8,12 @@ class HolafGroupBypasser:
     def INPUT_TYPES(s):
         return {
             "required": {
-                # ComfyUI voit ["None"], mais le JS va injecter les vrais noms.
-                # VALIDATE_INPUTS ci-dessous empêchera l'erreur de validation.
-                "comfy_group": (["None"],), 
+                # MODIFICATION CRITIQUE :
+                # On passe de (["None"],) à ("STRING", ...)
+                # Cela transforme l'entrée en "Texte libre" pour le validateur Python,
+                # ce qui accepte n'importe quel nom de groupe ("Step 1", "Step 2", etc.).
+                # Le JavaScript se chargera de l'afficher comme une Dropdown.
+                "comfy_group": ("STRING", {"default": "None"}), 
                 "group_name": ("STRING", {"default": "Group A"}),
                 "active": ("BOOLEAN", {"default": True, "label_on": "ON", "label_off": "OFF"}),
                 "bypass_mode": (["Bypass", "Mute"],),
@@ -26,17 +29,15 @@ class HolafGroupBypasser:
     FUNCTION = "process"
     CATEGORY = "holaf"
 
-    # --- CORRECTION DU BUG "Value not in list" ---
+    # On garde VALIDATE_INPUTS par sécurité
     @classmethod
-    def VALIDATE_INPUTS(s, input_types):
-        # On force la validation à True pour accepter les noms de groupes 
-        # qui ne sont pas dans la liste ["None"] définie statiquement.
+    def VALIDATE_INPUTS(s, **kwargs):
         return True
 
     def check_lazy_status(self, comfy_group, group_name, active, bypass_mode, original=None, alternative=None, **kwargs):
         """
-        Gère l'évaluation paresseuse (Lazy Evaluation) pour éviter les erreurs 
-        quand une entrée est manquante/mute.
+        Gère l'évaluation paresseuse pour éviter les erreurs "Missing Input" 
+        quand le groupe source est coupé.
         """
         if active:
             return ["original"]
