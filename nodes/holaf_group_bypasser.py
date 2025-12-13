@@ -8,6 +8,8 @@ class HolafGroupBypasser:
     def INPUT_TYPES(s):
         return {
             "required": {
+                # ComfyUI voit ["None"], mais le JS va injecter les vrais noms.
+                # VALIDATE_INPUTS ci-dessous empêchera l'erreur de validation.
                 "comfy_group": (["None"],), 
                 "group_name": ("STRING", {"default": "Group A"}),
                 "active": ("BOOLEAN", {"default": True, "label_on": "ON", "label_off": "OFF"}),
@@ -24,11 +26,17 @@ class HolafGroupBypasser:
     FUNCTION = "process"
     CATEGORY = "holaf"
 
+    # --- CORRECTION DU BUG "Value not in list" ---
+    @classmethod
+    def VALIDATE_INPUTS(s, input_types):
+        # On force la validation à True pour accepter les noms de groupes 
+        # qui ne sont pas dans la liste ["None"] définie statiquement.
+        return True
+
     def check_lazy_status(self, comfy_group, group_name, active, bypass_mode, original=None, alternative=None, **kwargs):
         """
-        Informe ComfyUI des entrées strictement nécessaires.
-        L'ajout de **kwargs est CRITIQUE pour éviter que cette fonction ne crash 
-        si ComfyUI envoie des arguments cachés (unique_id, etc.).
+        Gère l'évaluation paresseuse (Lazy Evaluation) pour éviter les erreurs 
+        quand une entrée est manquante/mute.
         """
         if active:
             return ["original"]
