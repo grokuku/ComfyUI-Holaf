@@ -7,9 +7,9 @@ import folder_paths
 
 class HolafLoadImageVideo:
     """
-    Node unifiée simplifiée pour charger des images ou des vidéos.
-    Gère: jpg, png, webp, webm, gif, mp4, etc.
-    Sortie: Image unique ou Batch d'images (Séquence).
+    Node unifiée simplifiée.
+    Charge tout média (Image ou Vidéo) via un seul point d'entrée.
+    Nécessite le fichier JS associé pour lever le filtre de fichier dans le navigateur.
     """
     
     @classmethod
@@ -20,7 +20,8 @@ class HolafLoadImageVideo:
         
         return {
             "required": {
-                "image": (sorted(files), {"image_upload": True}),
+                # On renomme "image" en "media_file" pour la sémantique
+                "media_file": (sorted(files), {"image_upload": True}),
             }
         }
 
@@ -29,20 +30,24 @@ class HolafLoadImageVideo:
     FUNCTION = "load_media"
     OUTPUT_NODE = False
 
-    def load_media(self, image):
-        image_path = folder_paths.get_annotated_filepath(image)
+    def load_media(self, media_file):
+        image_path = folder_paths.get_annotated_filepath(media_file)
         
-        # Détection basique du type de fichier
+        # Détection basique
         ext = os.path.splitext(image_path)[1].lower()
         VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.gif']
         
         if ext in VIDEO_EXTENSIONS:
-            return self._load_video(image_path, image)
+            return self._load_video(image_path, media_file)
         else:
-            return self._load_image_standard(image_path, image)
+            return self._load_image_standard(image_path, media_file)
 
     def _load_image_standard(self, image_path, filename):
-        i = Image.open(image_path)
+        try:
+            i = Image.open(image_path)
+        except OSError:
+            raise ValueError(f"Le fichier '{filename}' n'est pas une image valide ou est corrompu.")
+
         i = ImageOps.exif_transpose(i)
         image = i.convert("RGB")
         image = np.array(image).astype(np.float32) / 255.0
@@ -76,27 +81,21 @@ class HolafLoadImageVideo:
                 # BGR -> RGB
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Sauvegarde de la 1ère frame pour le preview
                 if preview_image is None:
                     preview_image = frame.copy()
                 
-                # Normalisation
                 frame = frame.astype(np.float32) / 255.0
                 frames.append(frame)
-                
         finally:
             cap.release()
 
         if not frames:
-            raise ValueError("Aucune frame chargée. Le fichier vidéo semble vide ou corrompu.")
+            raise ValueError("Erreur : La vidéo semble vide ou illisible.")
 
         output_image = torch.from_numpy(np.stack(frames))
-        
-        # Génération d'un masque vide (tout visible)
         b, h, w, c = output_image.shape
         output_mask = torch.zeros((b, h, w), dtype=torch.float32, device="cpu")
 
-        # Gestion Preview UI (Vignette)
         if preview_image is not None:
             preview_filename = f"preview_{os.path.basename(filename)}.webp"
             self._save_preview(preview_image, preview_filename)
@@ -109,7 +108,6 @@ class HolafLoadImageVideo:
         return {"result": (output_image, output_mask)}
 
     def _save_preview(self, frame_np_uint8, filename):
-        """Sauvegarde une frame (ndarray uint8) dans le dossier temp de ComfyUI"""
         temp_dir = folder_paths.get_temp_directory()
         img = Image.fromarray(frame_np_uint8)
         img.save(os.path.join(temp_dir, filename))
