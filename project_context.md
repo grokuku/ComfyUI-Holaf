@@ -1,5 +1,5 @@
 # CONTEXTE DU PROJET "Holaf Custom Nodes"
-    # Date de dernière mise à jour : 2025-08-05
+    # Date de dernière mise à jour : 2025-12-13
     # Ce fichier sert de référence unique pour toutes les sessions de travail.
     # Il doit être fourni en intégralité au début de chaque nouvelle conversation.
 
@@ -58,14 +58,15 @@
     1.  **Workflows de Haute Résolution :** Fournir des outils pour gérer le tiling manuel via `Tiled KSampler`.
     2.  **Automatisation et Productivité :** Simplifier et accélérer les tâches répétitives via des nœuds intelligents comme `Resolution Preset`, `Instagram Resize`, et `Save Image` (sauvegarde enrichie).
     3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
-    4.  **Calcul Distribué (Expérimental - Client) :** Le `Tiled KSampler` intègre une logique client permettant de déporter des tâches vers un orchestrateur distant (composant serveur non fourni).
+    4.  **Contrôle de Flux et Navigation :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`) et pour naviguer rapidement dans le canvas (`Shortcut`).
+    5.  **Calcul Distribué (Expérimental - Client) :** Le `Tiled KSampler` intègre une logique client permettant de déporter des tâches vers un orchestrateur distant (composant serveur non fourni).
 
     ---
 
     ## 2. Principes d'Architecture Fondamentaux
 
     1.  **Modularité par Nœud :** Chaque fonctionnalité est encapsulée dans son propre fichier Python dans `nodes/`, favorisant la spécialisation et la maintenance.
-    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via un widget personnalisé.
+    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `Remote`, `Shortcut`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
     3.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `ORCHESTRATOR_CONFIG` optionnel) pour créer des pipelines de données logiques et robustes.
     4.  **Interopérabilité :** Les nœuds utilisent et retournent les types natifs de ComfyUI (`IMAGE`, `MODEL`, `LATENT`, etc.), garantissant une intégration transparente dans les workflows existants.
 
@@ -90,9 +91,13 @@
       ├─ 📄 requirements.txt            # Liste des dépendances Python externes.
       │
       ├─ 📁 js/
-      │  └─ 📄 holaf_image_comparer.js   # FRONTEND : Code JavaScript pour l'interface interactive du nœud "Image Comparer".
+      │  ├─ 📄 holaf_image_comparer.js   # FRONTEND : Code JavaScript pour l'interface interactive du nœud "Image Comparer".
+      │  ├─ 📄 holaf_remote_control.js   # FRONTEND : Logique de synchronisation pour Bypasser/Remote/Group.
+      │  └─ 📄 holaf_shortcut.js         # FRONTEND : Logique de navigation (boutons Save/Jump) pour Shortcut.
       │
       └─ 📁 nodes/                      # CŒUR DU PROJET : Contient la logique backend de chaque nœud.
+         ├─ 📄 holaf_bypasser.py         # Commutateur de flux (Always/Bypass) contrôlable par groupe.
+         ├─ 📄 holaf_group_bypasser.py   # Variante du Bypasser capable de muter/bypass des groupes ComfyUI entiers.
          ├─ 📄 holaf_image_comparer.py   # BACKEND du comparateur d'images.
          ├─ 📄 holaf_instagram_resize.py # Redimensionne une image pour les formats Instagram.
          ├─ 📄 holaf_ksampler.py         # KSampler amélioré avec entrée image directe, bypass, et nettoyage VRAM.
@@ -101,8 +106,11 @@
          ├─ 📄 holaf_mask_to_boolean.py  # Utilitaire qui convertit un masque en booléen (True si vide).
          ├─ 📄 holaf_overlay.py          # Superpose une image sur une autre.
          ├─ 📄 holaf_ratio_calculator.py # Calcule toutes les résolutions valides pour un ratio donné.
+         ├─ 📄 holaf_remote.py           # Télécommande (Output) pour piloter les Bypassers d'un même groupe.
          ├─ 📄 holaf_resolution_preset.py# Propose des résolutions optimisées pour SD1.5, SDXL, FLUX.
          ├─ 📄 holaf_save_image.py       # Sauvegarde une image avec prompt et workflow (.txt/.json).
+         ├─ 📄 holaf_shortcut.py         # Ancre de navigation (point de sauvegarde de vue).
+         ├─ 📄 holaf_shortcut_user.py    # Bouton de saut vers une ancre Shortcut.
          ├─ 📄 holaf_tiled_ksampler.py   # TILING MANUEL + CLIENT RESEAU : Tiling par blending et client HTTP.
          └─ 📄 holaf_upscale_image.py    # Upscale une image à un nombre de mégapixels cible.
     ```
@@ -112,7 +120,7 @@
     ## 4. Vision de l'Interface Utilisateur (UI)
 
     L'approche UI est pragmatique et ciblée :
-    *   **UI Riche et Spécifique :** Le `HolafImageComparer` utilise un widget JavaScript complexe et sur-mesure.
+    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Shortcut` et `Remote` utilisent des widgets JavaScript complexes pour interagir directement avec le canvas (boutons, synchronisation).
     *   **Widgets Natifs :** La majorité des nœuds utilisent les widgets standards de ComfyUI (sliders, dropdowns).
 
     ---
@@ -120,7 +128,7 @@
     ## 5. État Actuel
 
     *   **État Actuel :**
-        Le projet est une collection d'outils utilitaires ("Swiss Army Knife") pour ComfyUI. Le code est fonctionnel pour les fichiers présents.
+        Le projet est une collection d'outils utilitaires ("Swiss Army Knife") pour ComfyUI. Le code est fonctionnel.
         
     *   **Points d'Attention :**
         1.  **Fonctionnalités Réseau :** Le `Tiled KSampler` contient du code pour communiquer avec un orchestrateur (`requests`), mais le code du serveur orchestrateur n'est pas inclus dans ce package.

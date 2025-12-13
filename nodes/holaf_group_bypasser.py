@@ -26,6 +26,17 @@ class HolafGroupBypasser:
     FUNCTION = "process"
     CATEGORY = "holaf"
 
+    def check_lazy_status(self, comfy_group, group_name, active, bypass_mode, original=None, alternative=None):
+        """
+        Informe ComfyUI des entrées strictement nécessaires pour l'exécution actuelle.
+        Si active est False, on ignore l'état de 'original' (qui peut être Mute/Mort),
+        ce qui empêche le nœud de passer en erreur.
+        """
+        if active:
+            return ["original"]
+        else:
+            return ["alternative"]
+
     def process(self, comfy_group, group_name, active, bypass_mode, original=None, alternative=None):
         if active:
             return (original,)
