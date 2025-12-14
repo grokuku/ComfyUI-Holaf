@@ -60,13 +60,14 @@
     3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
     4.  **Contrôle de Flux et Navigation :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`) et pour naviguer rapidement dans le canvas (`Shortcut`).
     5.  **Calcul Distribué (Expérimental - Client) :** Le `Tiled KSampler` intègre une logique client permettant de déporter des tâches vers un orchestrateur distant (composant serveur non fourni).
+    6.  **Gestion Unifiée des Médias :** Charger indifféremment images et vidéos (MP4, GIF, etc.) via un nœud unique `Holaf Load Image/Video` avec prévisualisation customisée.
 
     ---
 
     ## 2. Principes d'Architecture Fondamentaux
 
     1.  **Modularité par Nœud :** Chaque fonctionnalité est encapsulée dans son propre fichier Python dans `nodes/`, favorisant la spécialisation et la maintenance.
-    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `Remote`, `Shortcut`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
+    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `Remote`, `Shortcut`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
     3.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `ORCHESTRATOR_CONFIG` optionnel) pour créer des pipelines de données logiques et robustes.
     4.  **Interopérabilité :** Les nœuds utilisent et retournent les types natifs de ComfyUI (`IMAGE`, `MODEL`, `LATENT`, etc.), garantissant une intégration transparente dans les workflows existants.
 
@@ -76,9 +77,9 @@
 
     ### 3.1. Technologies Principales
     *   **Environnement Hôte :** ComfyUI
-    *   **Backend & Logique :** Python 3, PyTorch, NumPy, **PyAV** (pour la vidéo - *en cours d'intégration*).
+    *   **Backend & Logique :** Python 3, PyTorch, NumPy, **PyAV** (gestion vidéo).
     *   **Frontend & UI :** JavaScript (ES6+)
-    *   **Dépendances Externes :** `spandrel`, `requests` (pour la partie réseau du Tiled KSampler), `Pillow`, `av`.
+    *   **Dépendances Externes :** `spandrel`, `requests` (réseau), `Pillow`, `av` (PyAV).
 
     ### 3.2. Arborescence du Projet et Rôle des Fichiers
 
@@ -94,7 +95,7 @@
       │  ├─ 📄 holaf_image_comparer.js   # FRONTEND : Code JavaScript pour l'interface interactive du nœud "Image Comparer".
       │  ├─ 📄 holaf_remote_control.js   # FRONTEND : Logique de synchronisation pour Bypasser/Remote/Group.
       │  ├─ 📄 holaf_shortcut.js         # FRONTEND : Logique de navigation (boutons Save/Jump) pour Shortcut.
-      │  └─ 📄 holaf_load_image_video.js # FRONTEND (INSTABLE/WIP) : Gestion du player vidéo et hack upload.
+      │  └─ 📄 holaf_load_image_video.js # FRONTEND : Widget d'upload hybride HTML/Canvas et preview vidéo.
       │
       └─ 📁 nodes/                      # CŒUR DU PROJET : Contient la logique backend de chaque nœud.
          ├─ 📄 holaf_bypasser.py         # Commutateur de flux (Always/Bypass) contrôlable par groupe.
@@ -114,7 +115,7 @@
          ├─ 📄 holaf_shortcut_user.py    # Bouton de saut vers une ancre Shortcut.
          ├─ 📄 holaf_tiled_ksampler.py   # TILING MANUEL + CLIENT RESEAU : Tiling par blending et client HTTP.
          ├─ 📄 holaf_upscale_image.py    # Upscale une image à un nombre de mégapixels cible.
-         └─ 📄 holaf_load_image_video.py # BACKEND (INSTABLE/WIP) : Tentative de chargeur unifié Image/Vidéo via PyAV.
+         └─ 📄 holaf_load_image_video.py # BACKEND : Chargeur unifié Image/Vidéo via PIL (fallback PyAV).
     ```
 
     ---
@@ -122,7 +123,7 @@
     ## 4. Vision de l'Interface Utilisateur (UI)
 
     L'approche UI est pragmatique et ciblée :
-    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Shortcut` et `Remote` utilisent des widgets JavaScript complexes pour interagir directement avec le canvas (boutons, synchronisation).
+    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Shortcut`, `Remote` et `Load Image/Video` utilisent des widgets JavaScript complexes pour interagir directement avec le canvas (boutons, synchronisation, players vidéo).
     *   **Widgets Natifs :** La majorité des nœuds utilisent les widgets standards de ComfyUI (sliders, dropdowns).
 
     ---
@@ -133,13 +134,8 @@
         *   L'ensemble des outils utilitaires ("Swiss Army Knife") est fonctionnel.
         *   Le système de **Group Bypasser** est robuste (évaluation paresseuse).
         *   **Image Comparer** et **Shortcut** disposent d'interfaces JS avancées opérationnelles.
-
-    *   **Développements Suspendus / Problématiques :**
-        *   **Holaf Load Image/Video :** Tentative de créer une node unifiée chargeant images et vidéos (MP4/GIF).
-            *   *État :* **Suspendu (Broken/Buggy).**
-            *   *Problèmes :* Le widget d'upload natif ComfyUI force le filtre "Images". Le hack JS pour contourner cela est instable. L'affichage du preview vidéo génère des duplicatas (Preview natif statique + Player JS Custom).
-            *   *Tech :* Backend migré vers `av` (PyAV) mais l'intégration Frontend reste bloquante.
+        *   **Holaf Load Image/Video** : Fonctionnel. Support unifié des images et vidéos avec prévisualisation customisée correcte.
 
     *   **Points d'Attention :**
         1.  **Fonctionnalités Réseau :** Le `Tiled KSampler` contient du code pour communiquer avec un orchestrateur (`requests`), mais le code du serveur orchestrateur n'est pas inclus dans ce package.
-        2.  **Dépendances :** Nécessite `spandrel` pour l'upscaling, `requests` pour le réseau, et désormais `av` (PyAV) si la node vidéo est réactivée.
+        2.  **Dépendances :** Nécessite `spandrel` pour l'upscaling, `requests` pour le réseau, et `av` (PyAV) pour la vidéo.

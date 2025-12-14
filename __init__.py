@@ -20,6 +20,7 @@ import hashlib
 
 # Node class imports
 from .nodes.holaf_save_image import HolafSaveImage
+from .nodes.holaf_save_video import HolafSaveVideo
 from .nodes.holaf_tiled_ksampler import HolafTiledKSampler
 
 from .nodes.holaf_ksampler import HolafKSampler
@@ -43,6 +44,7 @@ from .nodes.holaf_load_image_video import HolafLoadImageVideo
 # Maps internal class names to the node's implementation.
 NODE_CLASS_MAPPINGS = {
     "HolafSaveImage": HolafSaveImage,
+    "HolafSaveVideo": HolafSaveVideo,
     "HolafTiledKSampler": HolafTiledKSampler,
 
     "HolafKSampler": HolafKSampler,
@@ -66,6 +68,7 @@ NODE_CLASS_MAPPINGS = {
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
 NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafSaveImage": "Save Image (Holaf)",
+    "HolafSaveVideo": "Save Video (Holaf)",
     "HolafTiledKSampler": "Tiled KSampler (Holaf)",
 
     "HolafKSampler": "KSampler (Holaf)",
