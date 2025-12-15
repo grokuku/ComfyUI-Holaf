@@ -38,35 +38,21 @@ class HolafImageBatchSlice:
 
     def slice_batch(self, images, start_index, end_index):
         # images shape is [batch_size, height, width, channels]
-        batch_count = images.shape[0]
-
-        # 1. Clamp start_index to valid range
+        
+        # 1. Clamp start_index to 0
         if start_index < 0:
             start_index = 0
-        
-        if start_index >= batch_count:
-            # If start is beyond the end, we just return the last image to avoid empty tensor errors
-            start_index = batch_count - 1
-
+            
         # 2. Logic for end_index (Inclusive)
-        # If user wants frame 0 to 10, they expect 11 frames (0, 1... 10).
         # Python slice is exclusive [start:end], so we need end_index + 1.
         slice_end = end_index + 1
 
-        # 3. Clamp slice_end
-        if slice_end > batch_count:
-            slice_end = batch_count
-        
-        # 4. Handle cases where End < Start
-        if slice_end <= start_index:
-            # Fallback: Return at least the start frame
-            slice_end = start_index + 1
-
-        # 5. Perform the slice
-        # Tensor slicing: images[start:end]
+        # 3. Perform the slice
+        # PyTorch handles cases where slice_end <= start_index gracefully:
+        # it returns an empty tensor of shape [0, H, W, C].
         sliced_images = images[start_index:slice_end]
         
-        # Debug info (optional, printed to console)
-        print(f"[Holaf Image Batch Slice] Keeping frames {start_index} to {slice_end-1} (Total: {len(sliced_images)}) from original {batch_count}.")
+        # Debug info
+        print(f"[Holaf Image Batch Slice] Request: {start_index} to {end_index}. Output count: {sliced_images.shape[0]}")
 
         return (sliced_images,)
