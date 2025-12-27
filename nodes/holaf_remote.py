@@ -13,7 +13,7 @@ class HolafRemote:
 
     RETURN_TYPES = ()
     FUNCTION = "process"
-    CATEGORY = "holaf"
+    CATEGORY = "Holaf"
     OUTPUT_NODE = True
 
     def process(self, group_name, active):

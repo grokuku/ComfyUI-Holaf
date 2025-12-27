@@ -302,8 +302,8 @@ class HolafBaseNode extends LGraphNode {
 HolafBaseNode.exposedActions = [];
 HolafBaseNode.title = "__NEED_CLASS_TITLE__";
 HolafBaseNode.type = "__NEED_CLASS_TYPE__";
-HolafBaseNode.category = "holaf";
-HolafBaseNode._category = "holaf";
+HolafBaseNode.category = "Holaf";
+HolafBaseNode._category = "Holaf";
 
 
 class HolafBaseVirtualNode extends HolafBaseNode {

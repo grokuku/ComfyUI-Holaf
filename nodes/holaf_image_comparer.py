@@ -26,7 +26,7 @@ class HolafImageComparer(PreviewImage):
 
   # Define the node's display name and category in the ComfyUI menu.
   NAME = 'image comparer (holaf)'
-  CATEGORY = 'holaf'
+  CATEGORY = 'Holaf'
   FUNCTION = "compare_images"
 
   # Define the output slots of the node.

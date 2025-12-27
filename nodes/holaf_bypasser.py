@@ -33,7 +33,7 @@ class HolafBypasser:
     RETURN_TYPES = (ANY_TYPE,)
     RETURN_NAMES = ("output",)
     FUNCTION = "process"
-    CATEGORY = "holaf"
+    CATEGORY = "Holaf"
 
     def process(self, group_name, active, original=None, alternative=None, **kwargs):
         # We accept **kwargs to handle dynamic inputs created by JS (bypass_2, bypass_3, etc.)

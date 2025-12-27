@@ -27,7 +27,7 @@ class HolafGroupBypasser:
     RETURN_TYPES = (ANY_TYPE,)
     RETURN_NAMES = ("output",)
     FUNCTION = "process"
-    CATEGORY = "holaf"
+    CATEGORY = "Holaf"
 
     # On garde VALIDATE_INPUTS par sécurité
     @classmethod

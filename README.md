@@ -46,8 +46,6 @@ Here is a list of the custom nodes included in this package:
     *   *Dependencies:* `spandrel`.
 
 ### Calculators & Utilities
-*   **Ratio Calculator (Holaf)**
-    *   *Function:* Calculates all valid resolutions (width x height) that match a specific aspect ratio and dimension constraints.
 *   **Resolution Preset (Holaf)**
     *   *Function:* Helps select optimal image dimensions (width, height) based on a target model (SD1.5, SDXL, FLUX) and a desired aspect ratio.
 

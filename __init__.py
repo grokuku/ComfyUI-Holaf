@@ -32,7 +32,6 @@ from .nodes.holaf_instagram_resize import HolafInstagramResize
 from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_saver import HolafLutSaver
 from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
-from .nodes.holaf_ratio_calculator import HolafRatioCalculator
 from .nodes.holaf_bypasser import HolafBypasser
 from .nodes.holaf_group_bypasser import HolafGroupBypasser
 from .nodes.holaf_remote import HolafRemote
@@ -58,7 +57,6 @@ NODE_CLASS_MAPPINGS = {
     "HolafLutGenerator": HolafLutGenerator,
     "HolafLutSaver": HolafLutSaver,
     "HolafMaskToBoolean": HolafMaskToBoolean,
-    "HolafRatioCalculator": HolafRatioCalculator,
     "HolafBypasser": HolafBypasser,
     "HolafGroupBypasser": HolafGroupBypasser,
     "HolafRemote": HolafRemote,
@@ -84,7 +82,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafLutGenerator": "LUT Generator (Holaf)",
     "HolafLutSaver": "LUT Saver (Holaf)",
     "HolafMaskToBoolean": "Mask to Boolean (Holaf)",
-    "HolafRatioCalculator": "Ratio Calculator (Holaf)",
     "HolafBypasser": "Bypasser (Holaf)",
     "HolafGroupBypasser": "Group Bypasser (Holaf)",
     "HolafRemote": "Remote (Holaf)",

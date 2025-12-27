@@ -95,6 +95,18 @@ MASTER_RESOLUTIONS = {
         "16:9 Landscape (HD Video-Widescreen)": (1664, 928),
         "~2.39:1 Landscape (Anamorphic Cinema)": (1856, 768),
     },
+    "Z-Image": {
+        "9:16 Portrait (Mobile Video)": (768, 1344),
+        "2:3 Portrait (35mm Photo)": (832, 1216),
+        "3:4 Portrait (Classic Monitor-Photo)": (896, 1152),
+        "4:5 Portrait (Large Format Photo)": (896, 1120),
+        "1:1 Square (Instagram-Medium Format)": (1024, 1024),
+        "5:4 Landscape (Large Format Photo)": (1120, 896),
+        "4:3 Landscape (Classic Monitor-Photo)": (1152, 864),
+        "3:2 Landscape (35mm Photo)": (1216, 832),
+        "16:9 Landscape (HD Video-Widescreen)": (1344, 768),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (1536, 640),
+    },
 }
 
 

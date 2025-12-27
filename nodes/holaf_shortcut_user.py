@@ -13,7 +13,7 @@ class HolafShortcutUser:
 
     RETURN_TYPES = ()
     FUNCTION = "process"
-    CATEGORY = "holaf"
+    CATEGORY = "Holaf"
     OUTPUT_NODE = True
 
     def process(self, target_shortcut):
