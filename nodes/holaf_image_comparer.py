@@ -22,6 +22,7 @@ class HolafImageComparer(PreviewImage):
   """
   A custom node that displays two sets of images in the UI for comparison.
   It also acts as a passthrough node for the input images.
+  If only image_a is provided, it acts as a standard preview bridge.
   """
 
   # Define the node's display name and category in the ComfyUI menu.
@@ -37,12 +38,14 @@ class HolafImageComparer(PreviewImage):
   def INPUT_TYPES(cls):
     """
     Defines the input slots for the node.
-    It takes two optional image inputs and hidden prompt/info inputs.
+    image_a is now required to ensure standard preview behavior at minimum.
+    image_b is optional for comparison.
     """
     return {
-      "required": {},
-      "optional": {
+      "required": {
         "image_a": ("IMAGE",),
+      },
+      "optional": {
         "image_b": ("IMAGE",),
       },
       "hidden": {
@@ -52,7 +55,7 @@ class HolafImageComparer(PreviewImage):
     }
 
   def compare_images(self,
-                     image_a=None,
+                     image_a,
                      image_b=None,
                      filename_prefix="holaf.compare.",
                      prompt=None,
@@ -65,10 +68,13 @@ class HolafImageComparer(PreviewImage):
     # Utilize the save_images method inherited from the parent PreviewImage class.
     # The saved image data is prepared for the frontend widget.
     ui_data = { "a_images":[], "b_images": [] }
+    
+    # Process Image A (Required)
     if image_a is not None and len(image_a) > 0:
       saved_a = self.save_images(image_a, filename_prefix + "a_", prompt, extra_pnginfo)
       ui_data['a_images'] = saved_a.get('ui', {}).get('images', [])
 
+    # Process Image B (Optional)
     if image_b is not None and len(image_b) > 0:
       saved_b = self.save_images(image_b, filename_prefix + "b_", prompt, extra_pnginfo)
       ui_data['b_images'] = saved_b.get('ui', {}).get('images', [])
@@ -76,6 +82,7 @@ class HolafImageComparer(PreviewImage):
     # Return a dictionary compliant with ComfyUI's custom node standards:
     # 'ui' key holds data for the frontend javascript widget.
     # 'result' key holds the data for the node's output connectors.
+    # Note: If image_b is None, the second output will be None.
     return { "ui": ui_data, "result": (image_a, image_b) }
 
 # This mapping is used by __init__.py to register the node with ComfyUI.
