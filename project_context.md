@@ -1,5 +1,5 @@
 # CONTEXTE DU PROJET "Holaf Custom Nodes"
-    # Date de dernière mise à jour : 2025-12-14
+    # Date de dernière mise à jour : 2025-12-29
     # Ce fichier sert de référence unique pour toutes les sessions de travail.
     # Il doit être fourni en intégralité au début de chaque nouvelle conversation.
 
@@ -56,10 +56,10 @@
     Le projet "Holaf Custom Nodes" est une suite d'outils avancés pour **ComfyUI**, destinée à des utilisateurs intermédiaires et experts. Son objectif principal est d'**étendre les capacités de ComfyUI** à travers plusieurs axes stratégiques :
 
     1.  **Workflows de Haute Résolution :** Fournir des outils pour gérer le tiling manuel via `Tiled KSampler`.
-    2.  **Automatisation et Productivité :** Simplifier et accélérer les tâches répétitives via des nœuds intelligents comme `Resolution Preset`, `Instagram Resize`, et `Save Image` (sauvegarde enrichie).
-    3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
-    4.  **Contrôle de Flux et Navigation :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`) et pour naviguer rapidement dans le canvas (`Shortcut`).
-    5.  **Calcul Distribué (Expérimental - Client) :** Le `Tiled KSampler` intègre une logique client permettant de déporter des tâches vers un orchestrateur distant (composant serveur non fourni).
+    2.  **Automatisation et Productivité :** Simplifier et accélérer les tâches répétitives via des nœuds intelligents comme `Resolution Preset`, `Instagram Resize`, `Save Image`, et `Text Box`.
+    3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`, `Image Adjustment`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
+    4.  **Débogage et Inspection :** Outils pour visualiser les données brutes (`To Text`) passant dans le graphe.
+    5.  **Contrôle de Flux et Navigation :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`) et pour naviguer rapidement dans le canvas (`Shortcut`).
     6.  **Gestion Unifiée des Médias :** Charger indifféremment images et vidéos (MP4, GIF, etc.) via un nœud unique `Holaf Load Image/Video` avec prévisualisation customisée.
 
     ---
@@ -67,9 +67,9 @@
     ## 2. Principes d'Architecture Fondamentaux
 
     1.  **Modularité par Nœud :** Chaque fonctionnalité est encapsulée dans son propre fichier Python dans `nodes/`, favorisant la spécialisation et la maintenance.
-    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `Remote`, `Shortcut`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
+    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `To Text`, `Shortcut`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
     3.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `ORCHESTRATOR_CONFIG` optionnel) pour créer des pipelines de données logiques et robustes.
-    4.  **Interopérabilité :** Les nœuds utilisent et retournent les types natifs de ComfyUI (`IMAGE`, `MODEL`, `LATENT`, etc.), garantissant une intégration transparente dans les workflows existants.
+    4.  **Interopérabilité :** Les nœuds utilisent et retournent les types natifs de ComfyUI (`IMAGE`, `MODEL`, `LATENT`, `STRING`), garantissant une intégration transparente dans les workflows existants.
 
     ---
 
@@ -77,7 +77,7 @@
 
     ### 3.1. Technologies Principales
     *   **Environnement Hôte :** ComfyUI
-    *   **Backend & Logique :** Python 3, PyTorch, NumPy, **PyAV** (gestion vidéo).
+    *   **Backend & Logique :** Python 3, PyTorch (pour `Image Adjustment`), NumPy, **PyAV** (gestion vidéo).
     *   **Frontend & UI :** JavaScript (ES6+)
     *   **Dépendances Externes :** `spandrel`, `requests` (réseau), `Pillow`, `av` (PyAV).
 
@@ -95,12 +95,14 @@
       │  ├─ 📄 holaf_image_comparer.js   # FRONTEND : Code JavaScript pour l'interface interactive du nœud "Image Comparer".
       │  ├─ 📄 holaf_remote_control.js   # FRONTEND : Logique de synchronisation pour Bypasser/Remote/Group.
       │  ├─ 📄 holaf_shortcut.js         # FRONTEND : Logique de navigation (boutons Save/Jump) pour Shortcut.
-      │  └─ 📄 holaf_load_image_video.js # FRONTEND : Widget d'upload hybride HTML/Canvas et preview vidéo.
+      │  ├─ 📄 holaf_load_image_video.js # FRONTEND : Widget d'upload hybride HTML/Canvas et preview vidéo.
+      │  └─ 📄 holaf_to_text.js          # FRONTEND : Widget texte en lecture seule pour afficher le debug de "To Text".
       │
       └─ 📁 nodes/                      # CŒUR DU PROJET : Contient la logique backend de chaque nœud.
          ├─ 📄 holaf_bypasser.py         # Commutateur de flux (Always/Bypass) contrôlable par groupe.
          ├─ 📄 holaf_group_bypasser.py   # Variante du Bypasser capable de muter/bypass des groupes ComfyUI entiers.
-         ├─ 📄 holaf_image_comparer.py   # BACKEND du comparateur d'images.
+         ├─ 📄 holaf_image_adjustment.py # Ajustement Brightness/Contrast/Saturation (Pure PyTorch).
+         ├─ 📄 holaf_image_comparer.py   # BACKEND du comparateur d'images (Entrée B optionnelle).
          ├─ 📄 holaf_instagram_resize.py # Redimensionne une image pour les formats Instagram.
          ├─ 📄 holaf_ksampler.py         # KSampler amélioré avec entrée image directe, bypass, et nettoyage VRAM.
          ├─ 📄 holaf_lut_generator.py    # Génère une Look-Up Table (LUT) 3D depuis une image de référence.
@@ -113,7 +115,9 @@
          ├─ 📄 holaf_save_image.py       # Sauvegarde une image avec prompt et workflow (.txt/.json).
          ├─ 📄 holaf_shortcut.py         # Ancre de navigation (point de sauvegarde de vue).
          ├─ 📄 holaf_shortcut_user.py    # Bouton de saut vers une ancre Shortcut.
+         ├─ 📄 holaf_text_box.py         # Zone de texte simple avec entrée optionnelle pour concaténation.
          ├─ 📄 holaf_tiled_ksampler.py   # TILING MANUEL + CLIENT RESEAU : Tiling par blending et client HTTP.
+         ├─ 📄 holaf_to_text.py          # DEBUG : Convertit n'importe quel input en String et l'affiche sur la node.
          ├─ 📄 holaf_upscale_image.py    # Upscale une image à un nombre de mégapixels cible.
          └─ 📄 holaf_load_image_video.py # BACKEND : Chargeur unifié Image/Vidéo via PIL (fallback PyAV).
     ```
@@ -123,7 +127,7 @@
     ## 4. Vision de l'Interface Utilisateur (UI)
 
     L'approche UI est pragmatique et ciblée :
-    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Shortcut`, `Remote` et `Load Image/Video` utilisent des widgets JavaScript complexes pour interagir directement avec le canvas (boutons, synchronisation, players vidéo).
+    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Shortcut`, `Remote`, `To Text` et `Load Image/Video` utilisent des widgets JavaScript complexes pour interagir directement avec le canvas (boutons, affichage texte dynamique, players vidéo).
     *   **Widgets Natifs :** La majorité des nœuds utilisent les widgets standards de ComfyUI (sliders, dropdowns).
 
     ---
@@ -132,9 +136,11 @@
 
     *   **Fonctionnalités Stables :**
         *   L'ensemble des outils utilitaires ("Swiss Army Knife") est fonctionnel.
-        *   Le système de **Group Bypasser** est robuste (évaluation paresseuse).
-        *   **Image Comparer** et **Shortcut** disposent d'interfaces JS avancées opérationnelles.
-        *   **Holaf Load Image/Video** : Fonctionnel. Support unifié des images et vidéos avec prévisualisation customisée correcte.
+        *   **Nouveautés Textuelles :** `Text Box` (concaténation) et `To Text` (debug/visualisation) sont opérationnels.
+        *   **Traitement d'Image :** `Image Adjustment` offre des corrections B/C/S performantes (PyTorch).
+        *   **Image Comparer :** Amélioré pour supporter une entrée unique (mode preview).
+        *   Le système de **Group Bypasser** est robuste.
+        *   **Holaf Load Image/Video** : Fonctionnel (Images et Vidéos).
 
     *   **Points d'Attention :**
         1.  **Fonctionnalités Réseau :** Le `Tiled KSampler` contient du code pour communiquer avec un orchestrateur (`requests`), mais le code du serveur orchestrateur n'est pas inclus dans ce package.
