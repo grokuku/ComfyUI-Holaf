@@ -44,6 +44,10 @@ from .nodes.holaf_text_box import HolafTextBox
 from .nodes.holaf_to_text import HolafToText
 from .nodes.holaf_image_adjustment import HolafImageAdjustment
 
+# New Dynamic Bundle Nodes
+from .nodes.holaf_bundle_creator import HolafBundleCreator
+from .nodes.holaf_bundle_extractor import HolafBundleExtractor
+
 
 # Maps internal class names to the node's implementation.
 NODE_CLASS_MAPPINGS = {
@@ -71,6 +75,9 @@ NODE_CLASS_MAPPINGS = {
     "HolafTextBox": HolafTextBox,
     "HolafToText": HolafToText,
     "HolafImageAdjustment": HolafImageAdjustment,
+
+    "HolafBundleCreator": HolafBundleCreator,
+    "HolafBundleExtractor": HolafBundleExtractor,
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
@@ -99,6 +106,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafTextBox": "Text Box (Holaf)",
     "HolafToText": "To Text (Holaf)",
     "HolafImageAdjustment": "Image Adjustment (Holaf)",
+
+    "HolafBundleCreator": "Bundle Creator (Holaf)",
+    "HolafBundleExtractor": "Bundle Extractor (Holaf)",
 }
 
 # The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.
