@@ -59,7 +59,7 @@
     2.  **Automatisation et Productivité :** Simplifier et accélérer les tâches répétitives via des nœuds intelligents comme `Resolution Preset`, `Instagram Resize`, `Save Image`, et `Text Box`.
     3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`, `Image Adjustment`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
     4.  **Débogage et Inspection :** Outils pour visualiser les données brutes (`To Text`) passant dans le graphe.
-    5.  **Contrôle de Flux et Navigation :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`) et pour naviguer rapidement dans le canvas (`Shortcut`).
+    5.  **Contrôle de Flux et Navigation :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`), pour naviguer rapidement dans le canvas (`Shortcut`), et pour regrouper les connexions (`Bundle Nodes`).
     6.  **Gestion Unifiée des Médias :** Charger indifféremment images et vidéos (MP4, GIF, etc.) via un nœud unique `Holaf Load Image/Video` avec prévisualisation customisée.
 
     ---
@@ -68,7 +68,7 @@
 
     1.  **Modularité par Nœud :** Chaque fonctionnalité est encapsulée dans son propre fichier Python dans `nodes/`, favorisant la spécialisation et la maintenance.
     2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `To Text`, `Shortcut`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
-    3.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `ORCHESTRATOR_CONFIG` optionnel) pour créer des pipelines de données logiques et robustes.
+    3.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `HOLAF_BUNDLE_DATA`, `ORCHESTRATOR_CONFIG` optionnel) pour créer des pipelines de données logiques et robustes.
     4.  **Interopérabilité :** Les nœuds utilisent et retournent les types natifs de ComfyUI (`IMAGE`, `MODEL`, `LATENT`, `STRING`), garantissant une intégration transparente dans les workflows existants.
 
     ---
@@ -99,6 +99,8 @@
       │  └─ 📄 holaf_to_text.js          # FRONTEND : Widget texte en lecture seule pour afficher le debug de "To Text".
       │
       └─ 📁 nodes/                      # CŒUR DU PROJET : Contient la logique backend de chaque nœud.
+         ├─ 📄 holaf_bundle_creator.py   # Regroupe jusqu'à 20 entrées variées dans un bundle unique.
+         ├─ 📄 holaf_bundle_extractor.py # Extrait les données d'un bundle vers 20 sorties correspondantes.
          ├─ 📄 holaf_bypasser.py         # Commutateur de flux (Always/Bypass) contrôlable par groupe.
          ├─ 📄 holaf_group_bypasser.py   # Variante du Bypasser capable de muter/bypass des groupes ComfyUI entiers.
          ├─ 📄 holaf_image_adjustment.py # Ajustement Brightness/Contrast/Saturation (Pure PyTorch).
@@ -141,6 +143,7 @@
         *   **Image Comparer :** Amélioré pour supporter une entrée unique (mode preview).
         *   Le système de **Group Bypasser** est robuste.
         *   **Holaf Load Image/Video** : Fonctionnel (Images et Vidéos).
+        *   **Bundle Nodes** : `Holaf Bundle Creator` et `Holaf Bundle Extractor` permettent de regrouper et transporter plusieurs connexions via un fil unique.
 
     *   **Points d'Attention :**
         1.  **Fonctionnalités Réseau :** Le `Tiled KSampler` contient du code pour communiquer avec un orchestrateur (`requests`), mais le code du serveur orchestrateur n'est pas inclus dans ce package.
