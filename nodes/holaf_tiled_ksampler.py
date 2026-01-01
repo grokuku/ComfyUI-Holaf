@@ -165,15 +165,29 @@ class HolafTiledKSampler:
             height_pixel, width_pixel = height_latent * 8, width_latent * 8
             x_slices, y_slices, tile_w_pixel, tile_h_pixel, overlap_pixel = self.calculate_tile_params(width_pixel, height_pixel, max_tile_size, overlap_size)
             tile_w_latent, tile_h_latent, overlap_latent = tile_w_pixel // 8, tile_h_pixel // 8, overlap_pixel // 8
+            
+            # --- FIX: Calculate safe overlaps independently for X and Y ---
+            # This prevents the "index out of bounds" crash if a tile dimension is smaller than 2 * overlap.
+            safe_overlap_x = min(overlap_latent, tile_w_latent // 2)
+            safe_overlap_y = min(overlap_latent, tile_h_latent // 2)
+
             output_latent = torch.zeros_like(latent_samples)
             blend_mask = torch.zeros_like(latent_samples)
             feather_mask_x = torch.ones((1, 1, 1, tile_w_latent), device=device)
             feather_mask_y = torch.ones((1, 1, tile_h_latent, 1), device=device)
-            if overlap_latent > 0:
-                for i in range(overlap_latent):
-                    weight = (i + 1) / float(overlap_latent + 1)
+
+            # Apply feathering for X
+            if safe_overlap_x > 0:
+                for i in range(safe_overlap_x):
+                    weight = (i + 1) / float(safe_overlap_x + 1)
                     feather_mask_x[..., i], feather_mask_x[..., -(i + 1)] = weight, weight
+
+            # Apply feathering for Y
+            if safe_overlap_y > 0:
+                for i in range(safe_overlap_y):
+                    weight = (i + 1) / float(safe_overlap_y + 1)
                     feather_mask_y[..., i, :], feather_mask_y[..., -(i + 1), :] = weight, weight
+
             tile_feather_mask = feather_mask_y * feather_mask_x
             pbar = comfy.utils.ProgressBar(x_slices * y_slices)
             step_x_latent, step_y_latent = tile_w_latent - overlap_latent, tile_h_latent - overlap_latent
