@@ -25,8 +25,11 @@ class UpscaleImageHolaf:
     Upscales an image using a chosen model (e.g., ESRGAN) to a target
     megapixel count. This provides flexible size control, independent of the
     model's native scale factor (e.g., 4x).
+    Now supports enforcing resolution multiples (8, 16) and fitting strategies (Stretch, Crop, Pad).
     """
     upscale_methods = ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"]
+    multiples = ["None", "8", "16"]
+    resize_modes = ["stretch", "crop", "pad"]
 
     @classmethod
     def INPUT_TYPES(s):
@@ -46,6 +49,8 @@ class UpscaleImageHolaf:
                 "upscale_method": (s.upscale_methods,),
                 # The target output size, expressed in megapixels.
                 "megapixels": ("FLOAT", {"default": 2.00, "min": 0.01, "max": 16.00, "step": 0.01}),
+                "force_multiple_of": (s.multiples, {"default": "None"}),
+                "resize_mode": (s.resize_modes, {"default": "stretch"}),
                 "clean_vram": ("BOOLEAN", {"default": False}),
             }
         }
@@ -55,7 +60,7 @@ class UpscaleImageHolaf:
     FUNCTION = "upscale"
     CATEGORY = "Holaf"
 
-    def upscale(self, image, model_name, upscale_method, megapixels, clean_vram):
+    def upscale(self, image, model_name, upscale_method, megapixels, force_multiple_of, resize_mode, clean_vram):
         # Optionally clear VRAM to free up memory before the main operation.
         if clean_vram:
             comfy.model_management.soft_empty_cache()
@@ -95,16 +100,19 @@ class UpscaleImageHolaf:
         target_width = max(1, int(original_width * scale_factor))
         target_height = max(1, int(original_height * scale_factor))
 
-        # --- Two-Stage Upscaling ---
-        # The upscaling is a two-stage process to handle any target size efficiently.
+        # --- Apply Modulo Constraint ---
+        if force_multiple_of != "None":
+            multiple = int(force_multiple_of)
+            target_width = round(target_width / multiple) * multiple
+            target_height = round(target_height / multiple) * multiple
+            target_width = max(multiple, target_width)
+            target_height = max(multiple, target_height)
 
+        # --- Two-Stage Upscaling ---
         # FIX: Explicitly cast the input tensor to float32 (torch.float) to prevent type mismatch errors.
-        # This resolves the "Input type (double) and bias type (float) should be the same" error.
         image = image.float()
 
         # Stage 1: Upscale using the loaded model's native scale factor.
-        # `comfy.utils.tiled_scale` processes the image in chunks (tiles), which is
-        # essential for handling large images that would otherwise exceed VRAM limits.
         image_for_model = image.movedim(-1, 1) # Permute to NCHW for model input
         try:
             with torch.no_grad():
@@ -121,12 +129,50 @@ class UpscaleImageHolaf:
 
         upscaled_image = scaled_img.movedim(1, -1) # Permute back to NHWC
 
-        # Stage 2: If the model's output size (e.g., from a fixed 4x scale) doesn't
-        # perfectly match the target, perform a final resampling step (e.g., Lanczos)
-        # to resize it precisely to the calculated target width and height.
+        # Stage 2: Final Resize with Mode (Stretch/Crop/Pad)
         current_height, current_width = upscaled_image.shape[1:3]
+
         if current_width != target_width or current_height != target_height:
              resizer = ImageScale()
-             upscaled_image = resizer.upscale(upscaled_image, upscale_method, target_width, target_height, "disabled")[0]
+
+             if resize_mode == "stretch":
+                 # Direct resize to target dimensions (ignoring aspect ratio changes)
+                 upscaled_image = resizer.upscale(upscaled_image, upscale_method, target_width, target_height, "disabled")[0]
+
+             elif resize_mode == "crop":
+                 # Scale to cover target, then crop center
+                 scale_w = target_width / current_width
+                 scale_h = target_height / current_height
+                 scale = max(scale_w, scale_h)
+
+                 temp_w = int(current_width * scale)
+                 temp_h = int(current_height * scale)
+
+                 # Upscale first
+                 upscaled_image = resizer.upscale(upscaled_image, upscale_method, temp_w, temp_h, "disabled")[0]
+
+                 # Then crop
+                 x_start = (temp_w - target_width) // 2
+                 y_start = (temp_h - target_height) // 2
+                 upscaled_image = upscaled_image[:, y_start:y_start+target_height, x_start:x_start+target_width, :]
+
+             elif resize_mode == "pad":
+                 # Scale to fit inside target, then pad with black
+                 scale_w = target_width / current_width
+                 scale_h = target_height / current_height
+                 scale = min(scale_w, scale_h)
+
+                 temp_w = int(current_width * scale)
+                 temp_h = int(current_height * scale)
+
+                 # Upscale first
+                 upscaled_image = resizer.upscale(upscaled_image, upscale_method, temp_w, temp_h, "disabled")[0]
+
+                 # Then pad
+                 new_image = torch.zeros((upscaled_image.shape[0], target_height, target_width, upscaled_image.shape[3]), dtype=upscaled_image.dtype, device=upscaled_image.device)
+                 x_start = (target_width - temp_w) // 2
+                 y_start = (target_height - temp_h) // 2
+                 new_image[:, y_start:y_start+temp_h, x_start:x_start+temp_w, :] = upscaled_image
+                 upscaled_image = new_image
 
         return (upscaled_image, model_name)

@@ -1,5 +1,5 @@
 # CONTEXTE DU PROJET "Holaf Custom Nodes"
-    # Date de dernière mise à jour : 2025-12-29
+    # Date de dernière mise à jour : 2026-01-01
     # Ce fichier sert de référence unique pour toutes les sessions de travail.
     # Il doit être fourni en intégralité au début de chaque nouvelle conversation.
 
@@ -59,7 +59,7 @@
     2.  **Automatisation et Productivité :** Simplifier et accélérer les tâches répétitives via des nœuds intelligents comme `Resolution Preset`, `Instagram Resize`, `Save Image`, et `Text Box`.
     3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`, `Image Adjustment`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
     4.  **Débogage et Inspection :** Outils pour visualiser les données brutes (`To Text`) passant dans le graphe.
-    5.  **Contrôle de Flux et Navigation :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`), pour naviguer rapidement dans le canvas (`Shortcut`), et pour regrouper les connexions (`Bundle Nodes`).
+    5.  **Contrôle de Flux :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`) et pour regrouper les connexions (`Bundle Nodes`).
     6.  **Gestion Unifiée des Médias :** Charger indifféremment images et vidéos (MP4, GIF, etc.) via un nœud unique `Holaf Load Image/Video` avec prévisualisation customisée.
 
     ---
@@ -67,7 +67,7 @@
     ## 2. Principes d'Architecture Fondamentaux
 
     1.  **Modularité par Nœud :** Chaque fonctionnalité est encapsulée dans son propre fichier Python dans `nodes/`, favorisant la spécialisation et la maintenance.
-    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `To Text`, `Shortcut`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
+    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `To Text`, `Remote`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
     3.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `HOLAF_BUNDLE_DATA`, `ORCHESTRATOR_CONFIG` optionnel) pour créer des pipelines de données logiques et robustes.
     4.  **Interopérabilité :** Les nœuds utilisent et retournent les types natifs de ComfyUI (`IMAGE`, `MODEL`, `LATENT`, `STRING`), garantissant une intégration transparente dans les workflows existants.
 
@@ -94,7 +94,6 @@
       ├─ 📁 js/
       │  ├─ 📄 holaf_image_comparer.js   # FRONTEND : Code JavaScript pour l'interface interactive du nœud "Image Comparer".
       │  ├─ 📄 holaf_remote_control.js   # FRONTEND : Logique de synchronisation pour Bypasser/Remote/Group.
-      │  ├─ 📄 holaf_shortcut.js         # FRONTEND : Logique de navigation (boutons Save/Jump) pour Shortcut.
       │  ├─ 📄 holaf_load_image_video.js # FRONTEND : Widget d'upload hybride HTML/Canvas et preview vidéo.
       │  └─ 📄 holaf_to_text.js          # FRONTEND : Widget texte en lecture seule pour afficher le debug de "To Text".
       │
@@ -113,14 +112,12 @@
          ├─ 📄 holaf_overlay.py          # Superpose une image sur une autre.
          ├─ 📄 holaf_ratio_calculator.py # Calcule toutes les résolutions valides pour un ratio donné.
          ├─ 📄 holaf_remote.py           # Télécommande (Output) pour piloter les Bypassers d'un même groupe.
-         ├─ 📄 holaf_resolution_preset.py# Propose des résolutions optimisées pour SD1.5, SDXL, FLUX.
+         ├─ 📄 holaf_resolution_preset.py# Propose des résolutions optimisées pour SD1.5, SDXL, FLUX, Qwen, Z-Image.
          ├─ 📄 holaf_save_image.py       # Sauvegarde une image avec prompt et workflow (.txt/.json).
-         ├─ 📄 holaf_shortcut.py         # Ancre de navigation (point de sauvegarde de vue).
-         ├─ 📄 holaf_shortcut_user.py    # Bouton de saut vers une ancre Shortcut.
          ├─ 📄 holaf_text_box.py         # Zone de texte simple avec entrée optionnelle pour concaténation.
          ├─ 📄 holaf_tiled_ksampler.py   # TILING MANUEL + CLIENT RESEAU : Tiling par blending et client HTTP.
          ├─ 📄 holaf_to_text.py          # DEBUG : Convertit n'importe quel input en String et l'affiche sur la node.
-         ├─ 📄 holaf_upscale_image.py    # Upscale une image à un nombre de mégapixels cible.
+         ├─ 📄 holaf_upscale_image.py    # Upscale une image (spandrel) avec contrôle mégapixels, modulo et resize mode.
          └─ 📄 holaf_load_image_video.py # BACKEND : Chargeur unifié Image/Vidéo via PIL (fallback PyAV).
     ```
 
@@ -129,7 +126,7 @@
     ## 4. Vision de l'Interface Utilisateur (UI)
 
     L'approche UI est pragmatique et ciblée :
-    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Shortcut`, `Remote`, `To Text` et `Load Image/Video` utilisent des widgets JavaScript complexes pour interagir directement avec le canvas (boutons, affichage texte dynamique, players vidéo).
+    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Remote`, `To Text` et `Load Image/Video` utilisent des widgets JavaScript complexes pour interagir directement avec le canvas (boutons, affichage texte dynamique, players vidéo).
     *   **Widgets Natifs :** La majorité des nœuds utilisent les widgets standards de ComfyUI (sliders, dropdowns).
 
     ---
@@ -144,6 +141,16 @@
         *   Le système de **Group Bypasser** est robuste.
         *   **Holaf Load Image/Video** : Fonctionnel (Images et Vidéos).
         *   **Bundle Nodes** : `Holaf Bundle Creator` et `Holaf Bundle Extractor` permettent de regrouper et transporter plusieurs connexions via un fil unique.
+
+    *   **Mises à Jour Récentes (01/2026) :**
+        *   **Resolution Preset** :
+            *   Ajout de profils "Speed" (~1MP) et "Quality" (~2MP/1080p) pour **FLUX**.
+            *   Ajout de profils "Balanced" (~1.7MP) et "Quality" (~2.5MP/2K) pour **Z-Image**.
+            *   Support natif des résolutions d'entraînement pour **Qwen-Image/Edit**.
+        *   **Upscale Image (Holaf)** :
+            *   Ajout de l'option `force_multiple_of` (8 ou 16) pour la compatibilité VAE/Vidéo.
+            *   Ajout de `resize_mode` (Stretch, Crop, Pad) pour gérer l'aspect ratio lors du redimensionnement forcé.
+        *   **Shortcut** : Suppression complète du système de navigation (backend et frontend).
 
     *   **Points d'Attention :**
         1.  **Fonctionnalités Réseau :** Le `Tiled KSampler` contient du code pour communiquer avec un orchestrateur (`requests`), mais le code du serveur orchestrateur n'est pas inclus dans ce package.
