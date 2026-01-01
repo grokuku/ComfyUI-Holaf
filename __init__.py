@@ -35,8 +35,6 @@ from .nodes.holaf_mask_to_boolean import HolafMaskToBoolean
 from .nodes.holaf_bypasser import HolafBypasser
 from .nodes.holaf_group_bypasser import HolafGroupBypasser
 from .nodes.holaf_remote import HolafRemote
-from .nodes.holaf_shortcut import HolafShortcut
-from .nodes.holaf_shortcut_user import HolafShortcutUser
 from .nodes.holaf_load_image_video import HolafLoadImageVideo
 from .nodes.holaf_image_batch_slice import HolafImageBatchSlice
 from .nodes.holaf_video_preview import HolafVideoPreview
@@ -67,8 +65,6 @@ NODE_CLASS_MAPPINGS = {
     "HolafBypasser": HolafBypasser,
     "HolafGroupBypasser": HolafGroupBypasser,
     "HolafRemote": HolafRemote,
-    "HolafShortcut": HolafShortcut,
-    "HolafShortcutUser": HolafShortcutUser,
     "HolafLoadImageVideo": HolafLoadImageVideo,
     "HolafImageBatchSlice": HolafImageBatchSlice,
     "HolafVideoPreview": HolafVideoPreview,
@@ -98,8 +94,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafBypasser": "Bypasser (Holaf)",
     "HolafGroupBypasser": "Group Bypasser (Holaf)",
     "HolafRemote": "Remote (Holaf)",
-    "HolafShortcut": "Shortcut (Holaf)",
-    "HolafShortcutUser": "Shortcut User (Holaf)",
     "HolafLoadImageVideo": "Load Image/Video (Holaf)",
     "HolafImageBatchSlice": "Image Batch Slice (Holaf)",
     "HolafVideoPreview": "Video Preview (Holaf)",
