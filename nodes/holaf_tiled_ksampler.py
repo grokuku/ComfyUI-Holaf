@@ -145,7 +145,7 @@ class HolafTiledKSampler:
             return (model, positive, negative, vae, final_latent, image_out)
 
         else:
-            # --- MODE LOCAL (CODE ORIGINAL) ---
+            # --- MODE LOCAL ---
             print("HolafTiledKSampler: Local mode activated.")
             if clean_vram: comfy.model_management.soft_empty_cache()
             if input_type == "latent":
@@ -161,13 +161,15 @@ class HolafTiledKSampler:
             latent_samples = latent_samples.to(device)
             noise = comfy.sample.prepare_noise(latent_samples, seed, None).to(device)
             model_copy = model.clone()
-            height_latent, width_latent = latent_samples.shape[2], latent_samples.shape[3]
+
+            # FIX: Use negative indexing to safely get Height/Width from 4D OR 5D latents
+            # shape[-2] is Height, shape[-1] is Width.
+            height_latent, width_latent = latent_samples.shape[-2], latent_samples.shape[-1]
             height_pixel, width_pixel = height_latent * 8, width_latent * 8
             x_slices, y_slices, tile_w_pixel, tile_h_pixel, overlap_pixel = self.calculate_tile_params(width_pixel, height_pixel, max_tile_size, overlap_size)
             tile_w_latent, tile_h_latent, overlap_latent = tile_w_pixel // 8, tile_h_pixel // 8, overlap_pixel // 8
             
-            # --- FIX: Calculate safe overlaps independently for X and Y ---
-            # This prevents the "index out of bounds" crash if a tile dimension is smaller than 2 * overlap.
+            # Safe overlaps (prevent crash on tiny tiles)
             safe_overlap_x = min(overlap_latent, tile_w_latent // 2)
             safe_overlap_y = min(overlap_latent, tile_h_latent // 2)
 
@@ -176,13 +178,11 @@ class HolafTiledKSampler:
             feather_mask_x = torch.ones((1, 1, 1, tile_w_latent), device=device)
             feather_mask_y = torch.ones((1, 1, tile_h_latent, 1), device=device)
 
-            # Apply feathering for X
             if safe_overlap_x > 0:
                 for i in range(safe_overlap_x):
                     weight = (i + 1) / float(safe_overlap_x + 1)
                     feather_mask_x[..., i], feather_mask_x[..., -(i + 1)] = weight, weight
 
-            # Apply feathering for Y
             if safe_overlap_y > 0:
                 for i in range(safe_overlap_y):
                     weight = (i + 1) / float(safe_overlap_y + 1)
@@ -191,20 +191,28 @@ class HolafTiledKSampler:
             tile_feather_mask = feather_mask_y * feather_mask_x
             pbar = comfy.utils.ProgressBar(x_slices * y_slices)
             step_x_latent, step_y_latent = tile_w_latent - overlap_latent, tile_h_latent - overlap_latent
+            
             for y in range(y_slices):
                 for x in range(x_slices):
                     y_start, x_start = y * step_y_latent, x * step_x_latent
                     if y_start + tile_h_latent > height_latent: y_start = height_latent - tile_h_latent
                     if x_start + tile_w_latent > width_latent: x_start = width_latent - tile_w_latent
                     y_end, x_end = y_start + tile_h_latent, x_start + tile_w_latent
-                    tile_latent = latent_samples[:, :, y_start:y_end, x_start:x_end]
-                    tile_noise = noise[:, :, y_start:y_end, x_start:x_end]
+                    
+                    # FIX: Use '...' ellipsis to slice ONLY the spatial dimensions (last two)
+                    # This works for 4D (B,C,H,W) and 5D (B,C,F,H,W) latents seamlessly.
+                    tile_latent = latent_samples[..., y_start:y_end, x_start:x_end]
+                    tile_noise = noise[..., y_start:y_end, x_start:x_end]
+                    
                     tile_positive, tile_negative = prepare_cond_for_tile(positive, device), prepare_cond_for_tile(negative, device)
                     sampled_output = comfy.sample.sample(model_copy, tile_noise, steps, cfg, sampler_name, scheduler, tile_positive, tile_negative, tile_latent, denoise=denoise, disable_noise=False, callback=None, disable_pbar=True, seed=seed)
                     sampled_tile = sampled_output if torch.is_tensor(sampled_output) else sampled_output["samples"]
-                    output_latent[:, :, y_start:y_end, x_start:x_end] += sampled_tile.to(device) * tile_feather_mask
-                    blend_mask[:, :, y_start:y_end, x_start:x_end] += tile_feather_mask
+                    
+                    # FIX: Use '...' for assignment as well
+                    output_latent[..., y_start:y_end, x_start:x_end] += sampled_tile.to(device) * tile_feather_mask
+                    blend_mask[..., y_start:y_end, x_start:x_end] += tile_feather_mask
                     pbar.update(1)
+
             blend_mask = torch.clamp(blend_mask, min=1e-6)
             final_latent_samples = (output_latent / blend_mask).to(comfy.model_management.intermediate_device())
             final_latent = {"samples": final_latent_samples}
