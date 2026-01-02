@@ -123,24 +123,28 @@ class HolafTiledKSampler:
         blend_mask = torch.zeros_like(latent_samples)
         
         # Create latent feather mask
-        # Explicit shape [1, 1, 1, Width] to be compatible with [B, C, H, W] or [B, C, F, H, W]
         safe_overlap_x = min(overlap_latent, tile_w_latent // 2)
         safe_overlap_y = min(overlap_latent, tile_h_latent // 2)
-        feather_mask_x = torch.ones((1, 1, 1, tile_w_latent), device=device)
-        feather_mask_y = torch.ones((1, 1, tile_h_latent, 1), device=device)
-
+        
+        f_mask_x = torch.ones((tile_w_latent,), device=device)
+        f_mask_y = torch.ones((tile_h_latent,), device=device)
         if safe_overlap_x > 0:
             for i in range(safe_overlap_x):
                 weight = (i + 1) / float(safe_overlap_x + 1)
-                feather_mask_x[:, :, :, i] = weight
-                feather_mask_x[:, :, :, -(i + 1)] = weight
+                f_mask_x[i] = weight
+                f_mask_x[-(i + 1)] = weight
         if safe_overlap_y > 0:
             for i in range(safe_overlap_y):
                 weight = (i + 1) / float(safe_overlap_y + 1)
-                feather_mask_y[:, :, i, :] = weight
-                feather_mask_y[:, :, -(i + 1), :] = weight
+                f_mask_y[i] = weight
+                f_mask_y[-(i + 1)] = weight
         
-        tile_feather_mask_latent = feather_mask_y * feather_mask_x
+        # Reshape masks for latent broadcast [B, C, (F), H, W]
+        l_view_x = [1] * latent_samples.ndim
+        l_view_x[-1] = tile_w_latent
+        l_view_y = [1] * latent_samples.ndim
+        l_view_y[-2] = tile_h_latent
+        tile_feather_mask_latent = f_mask_y.view(l_view_y) * f_mask_x.view(l_view_x)
         
         pbar = comfy.utils.ProgressBar(x_slices * y_slices)
         step_x_latent, step_y_latent = tile_w_latent - overlap_latent, tile_h_latent - overlap_latent
@@ -170,78 +174,77 @@ class HolafTiledKSampler:
         final_latent_samples = (output_latent / blend_mask).to(comfy.model_management.intermediate_device())
         final_latent = {"samples": final_latent_samples}
         
-        # Detect if we are dealing with 5D latents (e.g. video)
-        is_video = (final_latent_samples.ndim == 5)
-        
         # --- 2. TILED VAE PASS (OR DUMMY) ---
         if vae_decode:
             if clean_vram: comfy.model_management.soft_empty_cache()
             print(f"HolafTiledKSampler: Decoding {x_slices * y_slices} tiles via VAE...")
             
             vae_device = comfy.model_management.vae_device()
-            batch_size = final_latent_samples.shape[0]
             
-            # Initialize output buffers
-            if is_video:
-                num_frames = final_latent_samples.shape[2]
-                out_shape = (batch_size, num_frames, height_pixel, width_pixel, 3)
-            else:
-                out_shape = (batch_size, height_pixel, width_pixel, 3)
-                
+            # Initial tile to determine output shape (4D vs 5D)
+            test_tile_latent = final_latent_samples[..., 0:tile_h_latent, 0:tile_w_latent].to(vae_device)
+            test_decoded = vae.decode(test_tile_latent)
+            
+            out_shape = list(test_decoded.shape)
+            out_shape[-3] = height_pixel # Height
+            out_shape[-2] = width_pixel  # Width
+            
             image_out = torch.zeros(out_shape, device=device)
             image_blend_mask = torch.zeros(out_shape, device=device)
             
-            # Create pixel feather mask for [B, H, W, C]
-            # Explicit shape [1, 1, Width, 1] for X and [1, Height, 1, 1] for Y
+            # Create pixel feather mask [B, (F), H, W, C]
             p_safe_overlap_x = min(overlap_pixel, tile_w_pixel // 2)
             p_safe_overlap_y = min(overlap_pixel, tile_h_pixel // 2)
-            p_feather_x = torch.ones((1, 1, tile_w_pixel, 1), device=device)
-            p_feather_y = torch.ones((1, tile_h_pixel, 1, 1), device=device)
-
+            
+            pf_mask_x = torch.ones((tile_w_pixel,), device=device)
+            pf_mask_y = torch.ones((tile_h_pixel,), device=device)
             if p_safe_overlap_x > 0:
                 for i in range(p_safe_overlap_x):
                     weight = (i + 1) / float(p_safe_overlap_x + 1)
-                    p_feather_x[:, :, i, :] = weight
-                    p_feather_x[:, :, -(i + 1), :] = weight
+                    pf_mask_x[i] = weight
+                    pf_mask_x[-(i + 1)] = weight
             if p_safe_overlap_y > 0:
                 for i in range(p_safe_overlap_y):
                     weight = (i + 1) / float(p_safe_overlap_y + 1)
-                    p_feather_y[:, i, :, :] = weight
-                    p_feather_y[:, -(i + 1), :, :] = weight
+                    pf_mask_y[i] = weight
+                    pf_mask_y[-(i + 1)] = weight
             
-            tile_feather_mask_pixel = p_feather_y * p_feather_x
+            # Reshape pixel masks: H is at -3, W is at -2 in [B, (F), H, W, C]
+            p_view_x = [1] * test_decoded.ndim
+            p_view_x[-2] = tile_w_pixel
+            p_view_y = [1] * test_decoded.ndim
+            p_view_y[-3] = tile_h_pixel
+            tile_feather_mask_pixel = pf_mask_y.view(p_view_y) * pf_mask_x.view(p_view_x)
             
             pbar_vae = comfy.utils.ProgressBar(x_slices * y_slices)
             for y in range(y_slices):
                 for x in range(x_slices):
-                    # Coordinates in latent
                     ly_start, lx_start = y * step_y_latent, x * step_x_latent
                     if ly_start + tile_h_latent > height_latent: ly_start = height_latent - tile_h_latent
                     if lx_start + tile_w_latent > width_latent: lx_start = width_latent - tile_w_latent
                     ly_end, lx_end = ly_start + tile_h_latent, lx_start + tile_w_latent
                     
-                    # Coordinates in pixels
                     py_start, px_start = ly_start * 8, lx_start * 8
                     py_end, px_end = ly_end * 8, lx_end * 8
                     
-                    # Slice latent and move to VAE device
                     tile_latent_subset = final_latent_samples[..., ly_start:ly_end, lx_start:lx_end].to(vae_device)
                     decoded_tile = vae.decode(tile_latent_subset).to(device)
                     
-                    # Add to accumulation buffers
                     image_out[..., py_start:py_end, px_start:px_end, :] += decoded_tile * tile_feather_mask_pixel
                     image_blend_mask[..., py_start:py_end, px_start:px_end, :] += tile_feather_mask_pixel
                     pbar_vae.update(1)
             
             image_blend_mask = torch.clamp(image_blend_mask, min=1e-6)
             image_out = (image_out / image_blend_mask).to(comfy.model_management.intermediate_device())
+            
+            # CRITICAL: Squeeze frame dimension if 5D with 1 frame for ComfyUI compatibility
+            if image_out.ndim == 5 and image_out.shape[1] == 1:
+                image_out = image_out.squeeze(1)
+                
         else:
             print("HolafTiledKSampler: VAE Decode skipped (outputting dummy image).")
-            if is_video:
-                num_frames = final_latent_samples.shape[2]
-                image_out = torch.zeros((batch_size, num_frames, 8, 8, 3))
-            else:
-                image_out = torch.zeros((batch_size, 8, 8, 3))
+            # Create a 4D dummy image (Batch, 8, 8, 3)
+            image_out = torch.zeros((final_latent_samples.shape[0], 8, 8, 3))
 
         final_latent["samples"] = final_latent["samples"].cpu()
         return (model, positive, negative, vae, final_latent, image_out)
