@@ -123,6 +123,7 @@ class HolafTiledKSampler:
         blend_mask = torch.zeros_like(latent_samples)
         
         # Create latent feather mask
+        # Explicit shape [1, 1, 1, Width] to be compatible with [B, C, H, W] or [B, C, F, H, W]
         safe_overlap_x = min(overlap_latent, tile_w_latent // 2)
         safe_overlap_y = min(overlap_latent, tile_h_latent // 2)
         feather_mask_x = torch.ones((1, 1, 1, tile_w_latent), device=device)
@@ -131,11 +132,13 @@ class HolafTiledKSampler:
         if safe_overlap_x > 0:
             for i in range(safe_overlap_x):
                 weight = (i + 1) / float(safe_overlap_x + 1)
-                feather_mask_x[..., i], feather_mask_x[..., -(i + 1)] = weight, weight
+                feather_mask_x[:, :, :, i] = weight
+                feather_mask_x[:, :, :, -(i + 1)] = weight
         if safe_overlap_y > 0:
             for i in range(safe_overlap_y):
                 weight = (i + 1) / float(safe_overlap_y + 1)
-                feather_mask_y[..., i, :], feather_mask_y[..., -(i + 1), :] = weight, weight
+                feather_mask_y[:, :, i, :] = weight
+                feather_mask_y[:, :, -(i + 1), :] = weight
         
         tile_feather_mask_latent = feather_mask_y * feather_mask_x
         
@@ -178,7 +181,7 @@ class HolafTiledKSampler:
             vae_device = comfy.model_management.vae_device()
             batch_size = final_latent_samples.shape[0]
             
-            # Initialize output buffers with the correct dimensionality
+            # Initialize output buffers
             if is_video:
                 num_frames = final_latent_samples.shape[2]
                 out_shape = (batch_size, num_frames, height_pixel, width_pixel, 3)
@@ -189,7 +192,7 @@ class HolafTiledKSampler:
             image_blend_mask = torch.zeros(out_shape, device=device)
             
             # Create pixel feather mask for [B, H, W, C]
-            # PyTorch will broadcast (1, H, W, 1) to (B, F, H, W, C) correctly.
+            # Explicit shape [1, 1, Width, 1] for X and [1, Height, 1, 1] for Y
             p_safe_overlap_x = min(overlap_pixel, tile_w_pixel // 2)
             p_safe_overlap_y = min(overlap_pixel, tile_h_pixel // 2)
             p_feather_x = torch.ones((1, 1, tile_w_pixel, 1), device=device)
@@ -198,11 +201,13 @@ class HolafTiledKSampler:
             if p_safe_overlap_x > 0:
                 for i in range(p_safe_overlap_x):
                     weight = (i + 1) / float(p_safe_overlap_x + 1)
-                    p_feather_x[..., i, :], p_feather_x[..., -(i + 1)] = weight, weight
+                    p_feather_x[:, :, i, :] = weight
+                    p_feather_x[:, :, -(i + 1), :] = weight
             if p_safe_overlap_y > 0:
                 for i in range(p_safe_overlap_y):
                     weight = (i + 1) / float(p_safe_overlap_y + 1)
-                    p_feather_y[..., i, :, :], p_feather_y[..., -(i + 1), :, :] = weight, weight
+                    p_feather_y[:, i, :, :] = weight
+                    p_feather_y[:, -(i + 1), :, :] = weight
             
             tile_feather_mask_pixel = p_feather_y * p_feather_x
             
@@ -223,7 +228,7 @@ class HolafTiledKSampler:
                     tile_latent_subset = final_latent_samples[..., ly_start:ly_end, lx_start:lx_end].to(vae_device)
                     decoded_tile = vae.decode(tile_latent_subset).to(device)
                     
-                    # Use ellipsis (...) to handle 4D or 5D slicing automatically
+                    # Add to accumulation buffers
                     image_out[..., py_start:py_end, px_start:px_end, :] += decoded_tile * tile_feather_mask_pixel
                     image_blend_mask[..., py_start:py_end, px_start:px_end, :] += tile_feather_mask_pixel
                     pbar_vae.update(1)
@@ -232,7 +237,6 @@ class HolafTiledKSampler:
             image_out = (image_out / image_blend_mask).to(comfy.model_management.intermediate_device())
         else:
             print("HolafTiledKSampler: VAE Decode skipped (outputting dummy image).")
-            # Return a minimal placeholder image
             if is_video:
                 num_frames = final_latent_samples.shape[2]
                 image_out = torch.zeros((batch_size, num_frames, 8, 8, 3))
