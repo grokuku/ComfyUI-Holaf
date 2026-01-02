@@ -101,7 +101,8 @@ class HolafTiledKSampler:
             latent = {"samples": vae.encode(image[:,:,:,:3])}
         else: raise ValueError(f"Unknown input_type: {input_type}")
         
-        if "samples" not in latent or not torch.is_tensor(latent["samples"]): raise TypeError("Latent input is not a valid 'samples' tensor.")
+        if "samples" not in latent or not torch.is_tensor(latent["samples"]): 
+            raise TypeError("Latent input is not a valid 'samples' tensor.")
         
         latent_samples = latent["samples"]
         device = model.load_device
@@ -112,7 +113,9 @@ class HolafTiledKSampler:
         height_latent, width_latent = latent_samples.shape[-2], latent_samples.shape[-1]
         height_pixel, width_pixel = height_latent * 8, width_latent * 8
         
-        x_slices, y_slices, tile_w_pixel, tile_h_pixel, overlap_pixel = self.calculate_tile_params(width_pixel, height_pixel, max_tile_size, overlap_size)
+        x_slices, y_slices, tile_w_pixel, tile_h_pixel, overlap_pixel = self.calculate_tile_params(
+            width_pixel, height_pixel, max_tile_size, overlap_size)
+        
         tile_w_latent, tile_h_latent, overlap_latent = tile_w_pixel // 8, tile_h_pixel // 8, overlap_pixel // 8
         
         # --- 1. TILED SAMPLING PASS ---
@@ -151,7 +154,9 @@ class HolafTiledKSampler:
                 tile_noise = noise[..., y_start:y_end, x_start:x_end]
                 
                 tile_positive, tile_negative = prepare_cond_for_tile(positive, device), prepare_cond_for_tile(negative, device)
-                sampled_output = comfy.sample.sample(model_copy, tile_noise, steps, cfg, sampler_name, scheduler, tile_positive, tile_negative, tile_latent, denoise=denoise, disable_noise=False, callback=None, disable_pbar=True, seed=seed)
+                sampled_output = comfy.sample.sample(model_copy, tile_noise, steps, cfg, sampler_name, scheduler, 
+                                                    tile_positive, tile_negative, tile_latent, denoise=denoise, 
+                                                    disable_noise=False, callback=None, disable_pbar=True, seed=seed)
                 sampled_tile = sampled_output if torch.is_tensor(sampled_output) else sampled_output["samples"]
                 
                 output_latent[..., y_start:y_end, x_start:x_end] += sampled_tile.to(device) * tile_feather_mask_latent
@@ -167,6 +172,7 @@ class HolafTiledKSampler:
             if clean_vram: comfy.model_management.soft_empty_cache()
             print(f"HolafTiledKSampler: Decoding {x_slices * y_slices} tiles via VAE...")
             
+            vae_device = comfy.model_management.vae_device()
             batch_size = final_latent_samples.shape[0]
             image_out = torch.zeros((batch_size, height_pixel, width_pixel, 3), device=device)
             image_blend_mask = torch.zeros((batch_size, height_pixel, width_pixel, 3), device=device)
@@ -201,7 +207,8 @@ class HolafTiledKSampler:
                     py_start, px_start = ly_start * 8, lx_start * 8
                     py_end, px_end = ly_end * 8, lx_end * 8
                     
-                    tile_latent_subset = final_latent_samples[..., ly_start:ly_end, lx_start:lx_end].to(vae.vae_device)
+                    # Slice latent and move to VAE device
+                    tile_latent_subset = final_latent_samples[..., ly_start:ly_end, lx_start:lx_end].to(vae_device)
                     decoded_tile = vae.decode(tile_latent_subset).to(device)
                     
                     image_out[:, py_start:py_end, px_start:px_end, :] += decoded_tile * tile_feather_mask_pixel
