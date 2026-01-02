@@ -15,20 +15,11 @@
 
 import torch
 import math
-import numpy as np
 import copy
-import os
-from PIL import Image
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
 from comfy.model_patcher import ModelPatcher
-
-# NOUVEAUX IMPORTS POUR LA COMMUNICATION RESEAU
-import requests
-import pickle
-import base64
-import io
 
 def prepare_cond_for_tile(original_cond_list, device):
     if not isinstance(original_cond_list, list): return []
@@ -44,34 +35,29 @@ def prepare_cond_for_tile(original_cond_list, device):
 
 
 class HolafTiledKSampler:
-    def extract_model_name(self, model_patcher: ModelPatcher) -> str:
-        try:
-            config_path = model_patcher.model.model_config.config_path
-            if "config.json" in os.path.basename(config_path):
-                 return os.path.basename(os.path.dirname(config_path))
-            else:
-                 return model_patcher.model.model_config.name or "unknown_model.safetensors"
-        except Exception as e:
-            print(f"HolafTiledKSampler: Could not reliably extract model name: {e}. Defaulting to 'unknown'.")
-            return "unknown_model.safetensors"
-
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "model": ("MODEL",), "positive": ("CONDITIONING",), "negative": ("CONDITIONING",), "vae": ("VAE",),
+                "model": ("MODEL",), 
+                "positive": ("CONDITIONING",), 
+                "negative": ("CONDITIONING",), 
+                "vae": ("VAE",),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                 "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
-                "sampler_name": (comfy.samplers.KSampler.SAMPLERS,), "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                "sampler_name": (comfy.samplers.KSampler.SAMPLERS,), 
+                "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
                 "denoise": ("FLOAT", {"default": 1.00, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "input_type": (["latent", "image"], {"default": "latent"}),
                 "max_tile_size": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
                 "overlap_size": ("INT", {"default": 128, "min": 0, "max": 8192, "step": 8}),
+                "vae_decode": ("BOOLEAN", {"default": True}),
                 "clean_vram": ("BOOLEAN", {"default": False}),
             },
             "optional": {
-                 "latent_image": ("LATENT",), "image": ("IMAGE",), "orchestrator_config": ("ORCHESTRATOR_CONFIG",),
+                 "latent_image": ("LATENT",), 
+                 "image": ("IMAGE",),
             }
         }
 
@@ -101,121 +87,132 @@ class HolafTiledKSampler:
 
     def sample_tiled(self, model: ModelPatcher, positive, negative, vae,
                      seed, steps, cfg, sampler_name, scheduler, denoise,
-                     input_type, max_tile_size, overlap_size, clean_vram,
-                     latent_image=None, image=None, orchestrator_config=None):
+                     input_type, max_tile_size, overlap_size, vae_decode, clean_vram,
+                     latent_image=None, image=None):
         
-        if orchestrator_config:
-            # --- MODE RESEAU ---
-            print("HolafTiledKSampler: Network mode activated.")
-            if input_type == "latent":
-                if latent_image is None: raise ValueError("Input type is 'latent', but no latent_image provided.")
-                latent = latent_image
-            elif input_type == "image":
-                if image is None: raise ValueError("Input type is 'image', but no image provided.")
-                latent = vae.encode(image[:,:,:,:3])
-            else: raise ValueError(f"Unknown input_type: {input_type}")
+        if clean_vram: comfy.model_management.soft_empty_cache()
+        
+        # --- INPUT PREPARATION ---
+        if input_type == "latent":
+            if latent_image is None: raise ValueError("Input type is 'latent', but no latent_image provided.")
+            latent = latent_image
+        elif input_type == "image":
+            if image is None: raise ValueError("Input type is 'image', but no image provided.")
+            latent = {"samples": vae.encode(image[:,:,:,:3])}
+        else: raise ValueError(f"Unknown input_type: {input_type}")
+        
+        if "samples" not in latent or not torch.is_tensor(latent["samples"]): raise TypeError("Latent input is not a valid 'samples' tensor.")
+        
+        latent_samples = latent["samples"]
+        device = model.load_device
+        latent_samples = latent_samples.to(device)
+        noise = comfy.sample.prepare_noise(latent_samples, seed, None).to(device)
+        model_copy = model.clone()
 
-            serialized_latent = base64.b64encode(pickle.dumps(latent["samples"].cpu())).decode('utf-8')
-            serialized_positive = base64.b64encode(pickle.dumps([p[0].cpu() for p in positive])).decode('utf-8')
-            serialized_negative = base64.b64encode(pickle.dumps([n[0].cpu() for n in negative])).decode('utf-8')
-            
-            payload = {
-                "checkpoint_name": self.extract_model_name(model),
-                "sampler_name": sampler_name, "scheduler": scheduler,
-                "steps": steps, "cfg": cfg, "seed": seed, "denoise": denoise,
-                "serialized_latent": serialized_latent,
-                "serialized_positive": serialized_positive,
-                "serialized_negative": serialized_negative,
-                "allowed_workers": orchestrator_config.get("active_workers", [])
-            }
+        height_latent, width_latent = latent_samples.shape[-2], latent_samples.shape[-1]
+        height_pixel, width_pixel = height_latent * 8, width_latent * 8
+        
+        x_slices, y_slices, tile_w_pixel, tile_h_pixel, overlap_pixel = self.calculate_tile_params(width_pixel, height_pixel, max_tile_size, overlap_size)
+        tile_w_latent, tile_h_latent, overlap_latent = tile_w_pixel // 8, tile_h_pixel // 8, overlap_pixel // 8
+        
+        # --- 1. TILED SAMPLING PASS ---
+        output_latent = torch.zeros_like(latent_samples)
+        blend_mask = torch.zeros_like(latent_samples)
+        
+        # Create latent feather mask
+        safe_overlap_x = min(overlap_latent, tile_w_latent // 2)
+        safe_overlap_y = min(overlap_latent, tile_h_latent // 2)
+        feather_mask_x = torch.ones((1, 1, 1, tile_w_latent), device=device)
+        feather_mask_y = torch.ones((1, 1, tile_h_latent, 1), device=device)
 
-            print(f"  -> Sending job to orchestrator at {orchestrator_config['address']}...")
-            try:
-                response = requests.post(f"{orchestrator_config['address']}/submit_job", json=payload, timeout=600)
-                response.raise_for_status()
-                img = Image.open(io.BytesIO(response.content))
-                image_np = np.array(img).astype(np.float32) / 255.0
-                image_out = torch.from_numpy(image_np)[None,]
-                final_latent = latent
-            except Exception as e:
-                print(f"FATAL: Error communicating with orchestrator: {e}")
-                raise e
+        if safe_overlap_x > 0:
+            for i in range(safe_overlap_x):
+                weight = (i + 1) / float(safe_overlap_x + 1)
+                feather_mask_x[..., i], feather_mask_x[..., -(i + 1)] = weight, weight
+        if safe_overlap_y > 0:
+            for i in range(safe_overlap_y):
+                weight = (i + 1) / float(safe_overlap_y + 1)
+                feather_mask_y[..., i, :], feather_mask_y[..., -(i + 1), :] = weight, weight
+        
+        tile_feather_mask_latent = feather_mask_y * feather_mask_x
+        
+        pbar = comfy.utils.ProgressBar(x_slices * y_slices)
+        step_x_latent, step_y_latent = tile_w_latent - overlap_latent, tile_h_latent - overlap_latent
+        
+        print(f"HolafTiledKSampler: Sampling {x_slices * y_slices} tiles...")
+        for y in range(y_slices):
+            for x in range(x_slices):
+                y_start, x_start = y * step_y_latent, x * step_x_latent
+                if y_start + tile_h_latent > height_latent: y_start = height_latent - tile_h_latent
+                if x_start + tile_w_latent > width_latent: x_start = width_latent - tile_w_latent
+                y_end, x_end = y_start + tile_h_latent, x_start + tile_w_latent
+                
+                tile_latent = latent_samples[..., y_start:y_end, x_start:x_end]
+                tile_noise = noise[..., y_start:y_end, x_start:x_end]
+                
+                tile_positive, tile_negative = prepare_cond_for_tile(positive, device), prepare_cond_for_tile(negative, device)
+                sampled_output = comfy.sample.sample(model_copy, tile_noise, steps, cfg, sampler_name, scheduler, tile_positive, tile_negative, tile_latent, denoise=denoise, disable_noise=False, callback=None, disable_pbar=True, seed=seed)
+                sampled_tile = sampled_output if torch.is_tensor(sampled_output) else sampled_output["samples"]
+                
+                output_latent[..., y_start:y_end, x_start:x_end] += sampled_tile.to(device) * tile_feather_mask_latent
+                blend_mask[..., y_start:y_end, x_start:x_end] += tile_feather_mask_latent
+                pbar.update(1)
 
-            print("  -> Job finished.")
-            return (model, positive, negative, vae, final_latent, image_out)
-
-        else:
-            # --- MODE LOCAL ---
-            print("HolafTiledKSampler: Local mode activated.")
+        blend_mask = torch.clamp(blend_mask, min=1e-6)
+        final_latent_samples = (output_latent / blend_mask).to(comfy.model_management.intermediate_device())
+        final_latent = {"samples": final_latent_samples}
+        
+        # --- 2. TILED VAE PASS (OR DUMMY) ---
+        if vae_decode:
             if clean_vram: comfy.model_management.soft_empty_cache()
-            if input_type == "latent":
-                if latent_image is None: raise ValueError("Input type is 'latent', but no latent_image provided.")
-                latent = latent_image
-            elif input_type == "image":
-                if image is None: raise ValueError("Input type is 'image', but no image provided.")
-                latent = {"samples": vae.encode(image[:,:,:,:3])}
-            else: raise ValueError(f"Unknown input_type: {input_type}")
-            if "samples" not in latent or not torch.is_tensor(latent["samples"]): raise TypeError("Latent input is not a valid 'samples' tensor.")
-            latent_samples = latent["samples"]
-            device = model.load_device
-            latent_samples = latent_samples.to(device)
-            noise = comfy.sample.prepare_noise(latent_samples, seed, None).to(device)
-            model_copy = model.clone()
-
-            # FIX: Use negative indexing to safely get Height/Width from 4D OR 5D latents
-            # shape[-2] is Height, shape[-1] is Width.
-            height_latent, width_latent = latent_samples.shape[-2], latent_samples.shape[-1]
-            height_pixel, width_pixel = height_latent * 8, width_latent * 8
-            x_slices, y_slices, tile_w_pixel, tile_h_pixel, overlap_pixel = self.calculate_tile_params(width_pixel, height_pixel, max_tile_size, overlap_size)
-            tile_w_latent, tile_h_latent, overlap_latent = tile_w_pixel // 8, tile_h_pixel // 8, overlap_pixel // 8
+            print(f"HolafTiledKSampler: Decoding {x_slices * y_slices} tiles via VAE...")
             
-            # Safe overlaps (prevent crash on tiny tiles)
-            safe_overlap_x = min(overlap_latent, tile_w_latent // 2)
-            safe_overlap_y = min(overlap_latent, tile_h_latent // 2)
-
-            output_latent = torch.zeros_like(latent_samples)
-            blend_mask = torch.zeros_like(latent_samples)
-            feather_mask_x = torch.ones((1, 1, 1, tile_w_latent), device=device)
-            feather_mask_y = torch.ones((1, 1, tile_h_latent, 1), device=device)
-
-            if safe_overlap_x > 0:
-                for i in range(safe_overlap_x):
-                    weight = (i + 1) / float(safe_overlap_x + 1)
-                    feather_mask_x[..., i], feather_mask_x[..., -(i + 1)] = weight, weight
-
-            if safe_overlap_y > 0:
-                for i in range(safe_overlap_y):
-                    weight = (i + 1) / float(safe_overlap_y + 1)
-                    feather_mask_y[..., i, :], feather_mask_y[..., -(i + 1), :] = weight, weight
-
-            tile_feather_mask = feather_mask_y * feather_mask_x
-            pbar = comfy.utils.ProgressBar(x_slices * y_slices)
-            step_x_latent, step_y_latent = tile_w_latent - overlap_latent, tile_h_latent - overlap_latent
+            batch_size = final_latent_samples.shape[0]
+            image_out = torch.zeros((batch_size, height_pixel, width_pixel, 3), device=device)
+            image_blend_mask = torch.zeros((batch_size, height_pixel, width_pixel, 3), device=device)
             
+            # Create pixel feather mask for [B, H, W, C]
+            p_safe_overlap_x = min(overlap_pixel, tile_w_pixel // 2)
+            p_safe_overlap_y = min(overlap_pixel, tile_h_pixel // 2)
+            p_feather_x = torch.ones((1, 1, tile_w_pixel, 1), device=device)
+            p_feather_y = torch.ones((1, tile_h_pixel, 1, 1), device=device)
+
+            if p_safe_overlap_x > 0:
+                for i in range(p_safe_overlap_x):
+                    weight = (i + 1) / float(p_safe_overlap_x + 1)
+                    p_feather_x[..., i, :], p_feather_x[..., -(i + 1), :] = weight, weight
+            if p_safe_overlap_y > 0:
+                for i in range(p_safe_overlap_y):
+                    weight = (i + 1) / float(p_safe_overlap_y + 1)
+                    p_feather_y[..., i, :, :], p_feather_y[..., -(i + 1), :, :] = weight, weight
+            
+            tile_feather_mask_pixel = p_feather_y * p_feather_x
+            
+            pbar_vae = comfy.utils.ProgressBar(x_slices * y_slices)
             for y in range(y_slices):
                 for x in range(x_slices):
-                    y_start, x_start = y * step_y_latent, x * step_x_latent
-                    if y_start + tile_h_latent > height_latent: y_start = height_latent - tile_h_latent
-                    if x_start + tile_w_latent > width_latent: x_start = width_latent - tile_w_latent
-                    y_end, x_end = y_start + tile_h_latent, x_start + tile_w_latent
+                    # Coordinates in latent
+                    ly_start, lx_start = y * step_y_latent, x * step_x_latent
+                    if ly_start + tile_h_latent > height_latent: ly_start = height_latent - tile_h_latent
+                    if lx_start + tile_w_latent > width_latent: lx_start = width_latent - tile_w_latent
+                    ly_end, lx_end = ly_start + tile_h_latent, lx_start + tile_w_latent
                     
-                    # FIX: Use '...' ellipsis to slice ONLY the spatial dimensions (last two)
-                    # This works for 4D (B,C,H,W) and 5D (B,C,F,H,W) latents seamlessly.
-                    tile_latent = latent_samples[..., y_start:y_end, x_start:x_end]
-                    tile_noise = noise[..., y_start:y_end, x_start:x_end]
+                    # Coordinates in pixels
+                    py_start, px_start = ly_start * 8, lx_start * 8
+                    py_end, px_end = ly_end * 8, lx_end * 8
                     
-                    tile_positive, tile_negative = prepare_cond_for_tile(positive, device), prepare_cond_for_tile(negative, device)
-                    sampled_output = comfy.sample.sample(model_copy, tile_noise, steps, cfg, sampler_name, scheduler, tile_positive, tile_negative, tile_latent, denoise=denoise, disable_noise=False, callback=None, disable_pbar=True, seed=seed)
-                    sampled_tile = sampled_output if torch.is_tensor(sampled_output) else sampled_output["samples"]
+                    tile_latent_subset = final_latent_samples[..., ly_start:ly_end, lx_start:lx_end].to(vae.vae_device)
+                    decoded_tile = vae.decode(tile_latent_subset).to(device)
                     
-                    # FIX: Use '...' for assignment as well
-                    output_latent[..., y_start:y_end, x_start:x_end] += sampled_tile.to(device) * tile_feather_mask
-                    blend_mask[..., y_start:y_end, x_start:x_end] += tile_feather_mask
-                    pbar.update(1)
+                    image_out[:, py_start:py_end, px_start:px_end, :] += decoded_tile * tile_feather_mask_pixel
+                    image_blend_mask[:, py_start:py_end, px_start:px_end, :] += tile_feather_mask_pixel
+                    pbar_vae.update(1)
+            
+            image_blend_mask = torch.clamp(image_blend_mask, min=1e-6)
+            image_out = (image_out / image_blend_mask).to(comfy.model_management.intermediate_device())
+        else:
+            print("HolafTiledKSampler: VAE Decode skipped (outputting dummy image).")
+            image_out = torch.zeros((1, 8, 8, 3))
 
-            blend_mask = torch.clamp(blend_mask, min=1e-6)
-            final_latent_samples = (output_latent / blend_mask).to(comfy.model_management.intermediate_device())
-            final_latent = {"samples": final_latent_samples}
-            image_out = vae.decode(final_latent["samples"]).to(comfy.model_management.intermediate_device())
-            final_latent["samples"] = final_latent["samples"].cpu()
-            return (model, positive, negative, vae, final_latent, image_out)
+        final_latent["samples"] = final_latent["samples"].cpu()
+        return (model, positive, negative, vae, final_latent, image_out)
