@@ -1,5 +1,5 @@
 # CONTEXTE DU PROJET "Holaf Custom Nodes"
-    # Date de dernière mise à jour : 2026-01-01
+    # Date de dernière mise à jour : 2026-01-03
     # Ce fichier sert de référence unique pour toutes les sessions de travail.
     # Il doit être fourni en intégralité au début de chaque nouvelle conversation.
 
@@ -58,7 +58,7 @@
     1.  **Workflows de Haute Résolution :** Fournir des outils pour gérer le tiling manuel via `Tiled KSampler`.
     2.  **Automatisation et Productivité :** Simplifier et accélérer les tâches répétitives via des nœuds intelligents comme `Resolution Preset`, `Instagram Resize`, `Save Image`, et `Text Box`.
     3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`, `Image Adjustment`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
-    4.  **Débogage et Inspection :** Outils pour visualiser les données brutes (`To Text`) passant dans le graphe.
+    4.  **Débogage et Inspection :** Outils pour visualiser et formater les données brutes (`To Text`) avec support Markdown et JSON.
     5.  **Contrôle de Flux :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`) et pour regrouper les connexions (`Bundle Nodes`).
     6.  **Gestion Unifiée des Médias :** Charger indifféremment images et vidéos (MP4, GIF, etc.) via un nœud unique `Holaf Load Image/Video` avec prévisualisation customisée.
 
@@ -67,9 +67,9 @@
     ## 2. Principes d'Architecture Fondamentaux
 
     1.  **Modularité par Nœud :** Chaque fonctionnalité est encapsulée dans son propre fichier Python dans `nodes/`, favorisant la spécialisation et la maintenance.
-    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `To Text`, `Remote`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs, JavaScript (`.js`) pour l'interaction via des widgets personnalisés.
-    3.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `HOLAF_BUNDLE_DATA`, `ORCHESTRATOR_CONFIG` optionnel) pour créer des pipelines de données logiques et robustes.
-    4.  **Interopérabilité :** Les nœuds utilisent et retournent les types natifs de ComfyUI (`IMAGE`, `MODEL`, `LATENT`, `STRING`), garantissant une intégration transparente dans les workflows existants.
+    2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `To Text`, `Remote`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs et le pré-formatage, JavaScript (`.js`) pour l'interaction et le rendu DOM.
+    3.  **Injection DOM "Lazy Swap" :** Pour les widgets nécessitant un rendu HTML riche (ex: Markdown dans `To Text`), le frontend utilise une stratégie de remplacement paresseux : il attend que le widget natif de ComfyUI soit inséré dans le DOM avant de le remplacer par un élément HTML personnalisé.
+    4.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `HOLAF_BUNDLE_DATA`, `AnyType` robuste) pour créer des pipelines de données logiques et robustes.
 
     ---
 
@@ -78,7 +78,7 @@
     ### 3.1. Technologies Principales
     *   **Environnement Hôte :** ComfyUI
     *   **Backend & Logique :** Python 3, PyTorch (pour `Image Adjustment`), NumPy, **PyAV** (gestion vidéo).
-    *   **Frontend & UI :** JavaScript (ES6+)
+    *   **Frontend & UI :** JavaScript (ES6+) avec manipulation DOM directe.
     *   **Dépendances Externes :** `spandrel`, `requests` (réseau), `Pillow`, `av` (PyAV).
 
     ### 3.2. Arborescence du Projet et Rôle des Fichiers
@@ -95,7 +95,7 @@
       │  ├─ 📄 holaf_image_comparer.js   # FRONTEND : Code JavaScript pour l'interface interactive du nœud "Image Comparer".
       │  ├─ 📄 holaf_remote_control.js   # FRONTEND : Logique de synchronisation pour Bypasser/Remote/Group.
       │  ├─ 📄 holaf_load_image_video.js # FRONTEND : Widget d'upload hybride HTML/Canvas et preview vidéo.
-      │  └─ 📄 holaf_to_text.js          # FRONTEND : Widget texte en lecture seule pour afficher le debug de "To Text".
+      │  └─ 📄 holaf_to_text.js          # FRONTEND : Widget HTML injecté avec support Markdown/JSON et coloration syntaxique.
       │
       └─ 📁 nodes/                      # CŒUR DU PROJET : Contient la logique backend de chaque nœud.
          ├─ 📄 holaf_bundle_creator.py   # Regroupe jusqu'à 20 entrées variées dans un bundle unique.
@@ -116,7 +116,7 @@
          ├─ 📄 holaf_save_image.py       # Sauvegarde une image avec prompt et workflow (.txt/.json).
          ├─ 📄 holaf_text_box.py         # Zone de texte simple avec entrée optionnelle pour concaténation.
          ├─ 📄 holaf_tiled_ksampler.py   # TILING MANUEL + CLIENT RESEAU : Tiling par blending et client HTTP.
-         ├─ 📄 holaf_to_text.py          # DEBUG : Convertit n'importe quel input en String et l'affiche sur la node.
+         ├─ 📄 holaf_to_text.py          # DEBUG : Convertit input en String avec formatage intelligent (JSON, Markdown, Tensors info).
          ├─ 📄 holaf_upscale_image.py    # Upscale une image (spandrel) avec contrôle mégapixels, modulo et resize mode.
          └─ 📄 holaf_load_image_video.py # BACKEND : Chargeur unifié Image/Vidéo via PIL (fallback PyAV).
     ```
@@ -126,8 +126,9 @@
     ## 4. Vision de l'Interface Utilisateur (UI)
 
     L'approche UI est pragmatique et ciblée :
-    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Remote`, `To Text` et `Load Image/Video` utilisent des widgets JavaScript complexes pour interagir directement avec le canvas (boutons, affichage texte dynamique, players vidéo).
-    *   **Widgets Natifs :** La majorité des nœuds utilisent les widgets standards de ComfyUI (sliders, dropdowns).
+    *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Remote`, `To Text` et `Load Image/Video` utilisent des widgets JavaScript complexes.
+    *   **To Text (Évolution) :** Utilise désormais une injection DOM robuste pour afficher du HTML (Markdown rendu) directement sur le nœud, avec barres de défilement et sélection de texte.
+    *   **Widgets Natifs :** La majorité des autres nœuds utilisent les widgets standards de ComfyUI (sliders, dropdowns).
 
     ---
 
@@ -135,23 +136,19 @@
 
     *   **Fonctionnalités Stables :**
         *   L'ensemble des outils utilitaires ("Swiss Army Knife") est fonctionnel.
-        *   **Nouveautés Textuelles :** `Text Box` (concaténation) et `To Text` (debug/visualisation) sont opérationnels.
-        *   **Traitement d'Image :** `Image Adjustment` offre des corrections B/C/S performantes (PyTorch).
-        *   **Image Comparer :** Amélioré pour supporter une entrée unique (mode preview).
-        *   Le système de **Group Bypasser** est robuste.
+        *   **Traitement d'Image :** `Image Adjustment`, `Overlay`, `Instagram Resize`.
+        *   **Group Bypasser** : Robuste.
         *   **Holaf Load Image/Video** : Fonctionnel (Images et Vidéos).
-        *   **Bundle Nodes** : `Holaf Bundle Creator` et `Holaf Bundle Extractor` permettent de regrouper et transporter plusieurs connexions via un fil unique.
+        *   **Bundle Nodes** : Opérationnels.
 
     *   **Mises à Jour Récentes (01/2026) :**
-        *   **Resolution Preset** :
-            *   Ajout de profils "Speed" (~1MP) et "Quality" (~2MP/1080p) pour **FLUX**.
-            *   Ajout de profils "Balanced" (~1.7MP) et "Quality" (~2.5MP/2K) pour **Z-Image**.
-            *   Support natif des résolutions d'entraînement pour **Qwen-Image/Edit**.
-        *   **Upscale Image (Holaf)** :
-            *   Ajout de l'option `force_multiple_of` (8 ou 16) pour la compatibilité VAE/Vidéo.
-            *   Ajout de `resize_mode` (Stretch, Crop, Pad) pour gérer l'aspect ratio lors du redimensionnement forcé.
-        *   **Shortcut** : Suppression complète du système de navigation (backend et frontend).
+        *   **To Text (Holaf)** :
+            *   **Rendu HTML Riche :** Support natif du **Markdown** (Titres, gras, code, listes) et du **JSON** (coloration syntaxique).
+            *   **Backend Intelligent :** Détection automatique du type de données (Tensors, Dicts, Lists) et formatage préalable avant l'envoi à l'UI.
+            *   **UX :** Ajout d'un sélecteur `display_mode` (Auto, Plain, JSON, Markdown).
+        *   **Resolution Preset** : Support profils FLUX, Z-Image, Qwen.
+        *   **Upscale Image** : Options `force_multiple_of` et `resize_mode`.
 
     *   **Points d'Attention :**
-        1.  **Fonctionnalités Réseau :** Le `Tiled KSampler` contient du code pour communiquer avec un orchestrateur (`requests`), mais le code du serveur orchestrateur n'est pas inclus dans ce package.
-        2.  **Dépendances :** Nécessite `spandrel` pour l'upscaling, `requests` pour le réseau, et `av` (PyAV) pour la vidéo.
+        1.  **Fonctionnalités Réseau :** Le `Tiled KSampler` dépend d'un orchestrateur externe non inclus.
+        2.  **Conflits de Types :** L'utilisation de `AnyType("*")` a été sécurisée (`__ne__` implémenté) pour éviter les erreurs "bool object is not callable" avec certains autres packs de nœuds.
