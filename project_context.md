@@ -59,7 +59,7 @@
     2.  **Automatisation et Productivité :** Simplifier et accélérer les tâches répétitives via des nœuds intelligents comme `Resolution Preset`, `Instagram Resize`, `Save Image`, et `Text Box`.
     3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`, `Image Adjustment`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
     4.  **Débogage et Inspection :** Outils pour visualiser et formater les données brutes (`To Text`) avec support Markdown et JSON.
-    5.  **Contrôle de Flux :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`), pour regrouper les connexions (`Bundle Nodes`), et pour gérer des priorités de signal (`Auto Select`).
+    5.  **Contrôle de Flux :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`), pour regrouper les connexions (`Bundle Nodes`), et pour gérer des priorités de signal (`Auto Select` / `Remote Selector`).
     6.  **Gestion Unifiée des Médias :** Charger indifféremment images et vidéos (MP4, GIF, etc.) via un nœud unique `Holaf Load Image/Video` avec prévisualisation customisée.
 
     ---
@@ -68,7 +68,7 @@
 
     1.  **Modularité par Nœud :** Chaque fonctionnalité est encapsulée dans son propre fichier Python dans `nodes/`, favorisant la spécialisation et la maintenance.
     2.  **Séparation Backend/Frontend :** Pour les nœuds à UI complexe (`Image Comparer`, `To Text`, `Remote`, `Load Image/Video`), la logique est séparée : Python (`.py`) pour les calculs et le pré-formatage, JavaScript (`.js`) pour l'interaction et le rendu DOM.
-    3.  **Injection DOM "Lazy Swap" :** Pour les widgets nécessitant un rendu HTML riche (ex: Markdown dans `To Text`), le frontend utilise une stratégie de remplacement paresseux : il attend que le widget natif de ComfyUI soit inséré dans le DOM avant de le remplacer par un élément HTML personnalisé.
+    3.  **Injection DOM "Lazy Swap" :** Pour les widgets nécessitant un rendu HTML riche (ex: Markdown dans `To Text`, Dropdown dynamique dans `Remote Selector`), le frontend utilise une stratégie de remplacement paresseux : il attend que le widget natif de ComfyUI soit inséré dans le DOM avant de le remplacer par un élément HTML personnalisé.
     4.  **Types de Données Personnalisés :** Le projet définit ses propres types (`HOLAF_LUT_DATA`, `HOLAF_BUNDLE_DATA`, `AnyType` robuste) pour créer des pipelines de données logiques et robustes.
 
     ---
@@ -93,7 +93,7 @@
       │
       ├─ 📁 js/
       │  ├─ 📄 holaf_image_comparer.js   # FRONTEND : Code JavaScript pour l'interface interactive du nœud "Image Comparer".
-      │  ├─ 📄 holaf_remote_control.js   # FRONTEND : Logique de synchronisation pour Bypasser/Remote/Group.
+      │  ├─ 📄 holaf_remote_control.js   # FRONTEND : Logique de synchronisation pour Bypasser/Remote/Group/Selector.
       │  ├─ 📄 holaf_load_image_video.js # FRONTEND : Widget d'upload hybride HTML/Canvas et preview vidéo.
       │  └─ 📄 holaf_to_text.js          # FRONTEND : Widget HTML injecté avec support Markdown/JSON et coloration syntaxique.
       │
@@ -113,6 +113,7 @@
          ├─ 📄 holaf_overlay.py          # Superpose une image sur une autre.
          ├─ 📄 holaf_ratio_calculator.py # Calcule toutes les résolutions valides pour un ratio donné.
          ├─ 📄 holaf_remote.py           # Télécommande (Output) pour piloter les Bypassers d'un même groupe.
+         ├─ 📄 holaf_remote_selector.py  # Télécommande Radio (1 parmi N) pour piloter des groupes mutuellement exclusifs.
          ├─ 📄 holaf_resolution_preset.py# Propose des résolutions optimisées pour SD1.5, SDXL, FLUX, Qwen, Z-Image.
          ├─ 📄 holaf_save_image.py       # Sauvegarde une image avec prompt et workflow (.txt/.json).
          ├─ 📄 holaf_text_box.py         # Zone de texte simple avec entrée optionnelle pour concaténation.
@@ -128,7 +129,8 @@
 
     L'approche UI est pragmatique et ciblée :
     *   **UI Riche et Spécifique :** Les nœuds `Image Comparer`, `Remote`, `To Text` et `Load Image/Video` utilisent des widgets JavaScript complexes.
-    *   **To Text (Évolution) :** Utilise désormais une injection DOM robuste pour afficher du HTML (Markdown rendu) directement sur le nœud, avec barres de défilement et sélection de texte.
+    *   **Dynamic Widgets :** `Remote Selector` transforme dynamiquement un champ texte en menu déroulant pour offrir une ergonomie supérieure (Radio Button logic).
+    *   **To Text :** Utilise une injection DOM robuste pour afficher du HTML (Markdown rendu).
     *   **Widgets Natifs :** La majorité des autres nœuds utilisent les widgets standards de ComfyUI (sliders, dropdowns).
 
     ---
@@ -142,12 +144,11 @@
         *   **Holaf Load Image/Video** : Fonctionnel (Images et Vidéos).
         *   **Bundle Nodes** : Opérationnels.
 
-    *   **Mises à Jour Récentes (01/2026) :**
-        *   **Nouveau Nœud :** `Auto Select x2` (Flow Control) pour gérer les fallbacks ou priorités de flux.
-        *   **To Text (Holaf)** :
-            *   **Rendu HTML Riche :** Support natif du **Markdown** (Titres, gras, code, listes) et du **JSON** (coloration syntaxique).
-            *   **Backend Intelligent :** Détection automatique du type de données (Tensors, Dicts, Lists) et formatage préalable avant l'envoi à l'UI.
-            *   **UX :** Ajout d'un sélecteur `display_mode` (Auto, Plain, JSON, Markdown).
+    *   **Mises à Jour Récentes (07/01/2026) :**
+        *   **Nouveaux Nœuds de Contrôle de Flux :**
+            *   **Auto Select x2** : Permet de définir une priorité de signal (Entrée 1 > Entrée 2).
+            *   **Remote Selector** : Télécommande de type "Boutons Radio". Permet d'activer un groupe unique parmi une liste définie par l'utilisateur, désactivant automatiquement tous les autres. Intègre une logique frontend avancée de remplacement de widget.
+        *   **To Text (Holaf)** : Support avancé Markdown/JSON et détection de types.
         *   **Resolution Preset** : Support profils FLUX, Z-Image, Qwen.
         *   **Upscale Image** : Options `force_multiple_of` et `resize_mode`.
 
