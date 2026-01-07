@@ -1,5 +1,5 @@
 # CONTEXTE DU PROJET "Holaf Custom Nodes"
-    # Date de dernière mise à jour : 2026-01-03
+    # Date de dernière mise à jour : 2026-01-07
     # Ce fichier sert de référence unique pour toutes les sessions de travail.
     # Il doit être fourni en intégralité au début de chaque nouvelle conversation.
 
@@ -59,7 +59,7 @@
     2.  **Automatisation et Productivité :** Simplifier et accélérer les tâches répétitives via des nœuds intelligents comme `Resolution Preset`, `Instagram Resize`, `Save Image`, et `Text Box`.
     3.  **Manipulation d'Image et Colorimétrie :** Intégrer des outils de traitement (`Overlay`, `Image Comparer`, `Image Adjustment`) et de gestion de la couleur (`LUT Generator`, `LUT Saver`) directement au sein des workflows.
     4.  **Débogage et Inspection :** Outils pour visualiser et formater les données brutes (`To Text`) avec support Markdown et JSON.
-    5.  **Contrôle de Flux :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`) et pour regrouper les connexions (`Bundle Nodes`).
+    5.  **Contrôle de Flux :** Offrir des outils pour activer/désactiver dynamiquement des parties du graphe (`Bypasser`, `Remote`, `Group Bypasser`), pour regrouper les connexions (`Bundle Nodes`), et pour gérer des priorités de signal (`Auto Select`).
     6.  **Gestion Unifiée des Médias :** Charger indifféremment images et vidéos (MP4, GIF, etc.) via un nœud unique `Holaf Load Image/Video` avec prévisualisation customisée.
 
     ---
@@ -98,6 +98,7 @@
       │  └─ 📄 holaf_to_text.js          # FRONTEND : Widget HTML injecté avec support Markdown/JSON et coloration syntaxique.
       │
       └─ 📁 nodes/                      # CŒUR DU PROJET : Contient la logique backend de chaque nœud.
+         ├─ 📄 holaf_auto_select_x2.py   # Sélectionne la première entrée active parmi deux (Priorité 1 > 2).
          ├─ 📄 holaf_bundle_creator.py   # Regroupe jusqu'à 20 entrées variées dans un bundle unique.
          ├─ 📄 holaf_bundle_extractor.py # Extrait les données d'un bundle vers 20 sorties correspondantes.
          ├─ 📄 holaf_bypasser.py         # Commutateur de flux (Always/Bypass) contrôlable par groupe.
@@ -142,6 +143,7 @@
         *   **Bundle Nodes** : Opérationnels.
 
     *   **Mises à Jour Récentes (01/2026) :**
+        *   **Nouveau Nœud :** `Auto Select x2` (Flow Control) pour gérer les fallbacks ou priorités de flux.
         *   **To Text (Holaf)** :
             *   **Rendu HTML Riche :** Support natif du **Markdown** (Titres, gras, code, listes) et du **JSON** (coloration syntaxique).
             *   **Backend Intelligent :** Détection automatique du type de données (Tensors, Dicts, Lists) et formatage préalable avant l'envoi à l'UI.
