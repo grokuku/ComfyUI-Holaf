@@ -60,7 +60,10 @@ app.registerExtension({
 
                 // Setup Remote Selector logic immediately (restore dropdown options)
                 if (this.type === HOLAF_REMOTE_SELECTOR_TYPE) {
-                    this.setupRemoteSelectorLogic();
+                    // Use setTimeout to ensure widgets are fully loaded/restored before swapping
+                    setTimeout(() => {
+                        this.setupRemoteSelectorLogic();
+                    }, 50);
                 }
 
                 // Fix Dynamic Slots
@@ -134,49 +137,66 @@ app.registerExtension({
             // --- CORE LOGIC : REMOTE SELECTOR (NEW) ---
             nodeType.prototype.setupRemoteSelectorLogic = function () {
                 const listWidget = this.widgets.find(w => w.name === "group_list");
-                const activeWidget = this.widgets.find(w => w.name === "active_group");
+                let activeWidgetIndex = this.widgets.findIndex(w => w.name === "active_group");
+                let activeWidget = this.widgets[activeWidgetIndex];
 
                 if (!listWidget || !activeWidget) return;
 
-                // 1. Force widget type to combo/dropdown
-                activeWidget.type = "combo";
-                activeWidget.options = activeWidget.options || {};
+                // --- KEY FIX: FORCE WIDGET REPLACEMENT ---
+                // If the widget is still a text input (STRING), we destroy it and create a proper COMBO widget.
+                if (activeWidget.type !== "combo") {
+                    const currentValue = activeWidget.value;
 
-                // 2. Parser function: Updates the dropdown options based on the text list
+                    // Remove the old text widget
+                    this.widgets.splice(activeWidgetIndex, 1);
+
+                    // Create configuration for the new combo widget
+                    // We initialize it with empty values, they will be populated by updateDropdownOptions
+                    const newWidget = this.addWidget("combo", "active_group", currentValue, (v) => { }, { values: [] });
+
+                    // Ensure the new widget is in the correct variable for the rest of the function
+                    activeWidget = newWidget;
+                }
+
+                // Parser function: Updates the dropdown options based on the text list
                 const updateDropdownOptions = () => {
-                    const lines = listWidget.value.split("\n").map(s => s.trim()).filter(s => s);
+                    const text = listWidget.value || "";
+                    const lines = text.split("\n").map(s => s.trim()).filter(s => s);
+
+                    // Update options on the combo widget
                     activeWidget.options.values = lines;
 
-                    // Validation: if current selection is invalid, reset (optional)
+                    // Validation: if current selection is invalid or empty, default to first available
                     if (lines.length > 0 && !lines.includes(activeWidget.value)) {
-                        activeWidget.value = lines[0];
+                        // Optional: Force a valid value if current is invalid. 
+                        // Useful for initial setup.
+                        if (activeWidget.value === "") {
+                            activeWidget.value = lines[0];
+                        }
                     }
                 };
 
-                // 3. Listener on the List Widget
+                // Listener on the List Widget
                 listWidget.callback = (v) => {
                     updateDropdownOptions();
                     this.setDirtyCanvas(true, true);
                 };
 
-                // 4. Initial update on load
-                updateDropdownOptions();
-
-                // 5. Logic on Selection Change (The Radio Button Logic)
-                const originalActiveCallback = activeWidget.callback;
+                // Logic on Selection Change
+                // We assign the callback directly to the (potentially new) widget
                 activeWidget.callback = (value) => {
-                    if (originalActiveCallback) originalActiveCallback(value);
                     if (IS_SYNCING) return;
 
                     const allGroups = listWidget.value.split("\n").map(s => s.trim()).filter(s => s);
 
-                    // Iterate over ALL groups defined in the list
                     allGroups.forEach(groupName => {
-                        // Activate ONLY the selected group, deactivate others
                         const isActive = (groupName === value);
                         this.syncGroupState(app.graph, groupName, isActive);
                     });
                 };
+
+                // Initial run to populate the list based on current text
+                updateDropdownOptions();
             };
 
             // --- GROUP SELECTOR LOGIC (Simplified) ---
