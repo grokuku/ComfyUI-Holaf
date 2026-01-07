@@ -49,6 +49,9 @@ from .nodes.holaf_bundle_extractor import HolafBundleExtractor
 # New Auto Select Node
 from .nodes.holaf_auto_select_x2 import HolafAutoSelectX2
 
+# New Remote Selector Node
+from .nodes.holaf_remote_selector import HolafRemoteSelector
+
 
 # Maps internal class names to the node's implementation.
 NODE_CLASS_MAPPINGS = {
@@ -78,6 +81,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafBundleCreator": HolafBundleCreator,
     "HolafBundleExtractor": HolafBundleExtractor,
     "HolafAutoSelectX2": HolafAutoSelectX2,
+    "HolafRemoteSelector": HolafRemoteSelector,
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
@@ -108,6 +112,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafBundleCreator": "Bundle Creator (Holaf)",
     "HolafBundleExtractor": "Bundle Extractor (Holaf)",
     "HolafAutoSelectX2": "Auto Select x2 (Holaf)",
+    "HolafRemoteSelector": "Remote Selector (Holaf)",
 }
 
 # The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.

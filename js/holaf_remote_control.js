@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2025 Holaf
- * Logic for HolafRemote, HolafBypasser and HolafGroupBypasser nodes.
+ * Logic for HolafRemote, HolafBypasser, HolafGroupBypasser and HolafRemoteSelector nodes.
  */
 
 import { app } from "../../scripts/app.js";
@@ -13,6 +13,7 @@ const MODE_BYPASS = 4;
 const HOLAF_BYPASSER_TYPE = "HolafBypasser";
 const HOLAF_GROUP_BYPASSER_TYPE = "HolafGroupBypasser";
 const HOLAF_REMOTE_TYPE = "HolafRemote";
+const HOLAF_REMOTE_SELECTOR_TYPE = "HolafRemoteSelector";
 
 let IS_SYNCING = false;
 
@@ -20,15 +21,19 @@ app.registerExtension({
     name: "holaf.RemoteControl",
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE].includes(nodeData.name)) {
-            
+        if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE, HOLAF_REMOTE_SELECTOR_TYPE].includes(nodeData.name)) {
+
             // --- 1. SETUP ON CREATION ---
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 if (onNodeCreated) onNodeCreated.apply(this, arguments);
-                
-                this.setupRemoteLogic();
-                
+
+                if (this.type === HOLAF_REMOTE_SELECTOR_TYPE) {
+                    this.setupRemoteSelectorLogic();
+                } else {
+                    this.setupRemoteLogic();
+                }
+
                 if (this.type === HOLAF_GROUP_BYPASSER_TYPE) {
                     this.setupGroupSelector();
                 }
@@ -38,19 +43,26 @@ app.registerExtension({
             const onConfigure = nodeType.prototype.onConfigure;
             nodeType.prototype.onConfigure = function () {
                 if (onConfigure) onConfigure.apply(this, arguments);
-                
-                // Fix Label
-                const groupWidget = this.widgets?.find(w => w.name === "group_name");
-                const activeWidget = this.widgets?.find(w => w.name === "active");
-                if (groupWidget && activeWidget) {
-                    activeWidget.label = groupWidget.value || "active";
+
+                // Fix Label for standard Remotes
+                if (this.type !== HOLAF_REMOTE_SELECTOR_TYPE) {
+                    const groupWidget = this.widgets?.find(w => w.name === "group_name");
+                    const activeWidget = this.widgets?.find(w => w.name === "active");
+                    if (groupWidget && activeWidget) {
+                        activeWidget.label = groupWidget.value || "active";
+                    }
                 }
 
                 // Setup Group Selector immediately
                 if (this.type === HOLAF_GROUP_BYPASSER_TYPE) {
                     this.setupGroupSelector();
                 }
-                
+
+                // Setup Remote Selector logic immediately (restore dropdown options)
+                if (this.type === HOLAF_REMOTE_SELECTOR_TYPE) {
+                    this.setupRemoteSelectorLogic();
+                }
+
                 // Fix Dynamic Slots
                 if (this.type === HOLAF_BYPASSER_TYPE) {
                     setTimeout(() => this.checkDynamicSlots(), 100);
@@ -67,9 +79,9 @@ app.registerExtension({
                     }
                 };
 
-                nodeType.prototype.checkDynamicSlots = function() {
+                nodeType.prototype.checkDynamicSlots = function () {
                     const originalSlot = this.findInputSlot("original");
-                    
+
                     if (originalSlot !== -1 && this.inputs[originalSlot].link !== null) {
                         const hasBypassSlot = this.inputs.some(i => i.name.startsWith("other_bypass"));
                         if (!hasBypassSlot) {
@@ -90,34 +102,85 @@ app.registerExtension({
             }
 
 
-            // --- CORE LOGIC ---
-            nodeType.prototype.setupRemoteLogic = function() {
+            // --- CORE LOGIC : STANDARD REMOTE ---
+            nodeType.prototype.setupRemoteLogic = function () {
+                // Ensure this logic doesn't run for the Selector
+                if (this.type === HOLAF_REMOTE_SELECTOR_TYPE) return;
+
                 const groupWidget = this.widgets.find(w => w.name === "group_name");
                 const activeWidget = this.widgets.find(w => w.name === "active");
 
                 if (!groupWidget || !activeWidget) return;
 
                 const updateLabel = (text) => {
-                    activeWidget.label = text || "active"; 
-                    this.setDirtyCanvas(true, true); 
+                    activeWidget.label = text || "active";
+                    this.setDirtyCanvas(true, true);
                 };
-                
+
                 updateLabel(groupWidget.value);
                 groupWidget.callback = (value) => { updateLabel(value); };
 
                 const originalActiveCallback = activeWidget.callback;
                 activeWidget.callback = (value) => {
                     if (originalActiveCallback) originalActiveCallback(value);
-                    if (IS_SYNCING) return; 
-                    
+                    if (IS_SYNCING) return;
+
                     const groupName = groupWidget.value;
                     this.syncGroupState(app.graph, groupName, value);
                     this.triggerBypassLogic(value);
                 };
             };
 
+            // --- CORE LOGIC : REMOTE SELECTOR (NEW) ---
+            nodeType.prototype.setupRemoteSelectorLogic = function () {
+                const listWidget = this.widgets.find(w => w.name === "group_list");
+                const activeWidget = this.widgets.find(w => w.name === "active_group");
+
+                if (!listWidget || !activeWidget) return;
+
+                // 1. Force widget type to combo/dropdown
+                activeWidget.type = "combo";
+                activeWidget.options = activeWidget.options || {};
+
+                // 2. Parser function: Updates the dropdown options based on the text list
+                const updateDropdownOptions = () => {
+                    const lines = listWidget.value.split("\n").map(s => s.trim()).filter(s => s);
+                    activeWidget.options.values = lines;
+
+                    // Validation: if current selection is invalid, reset (optional)
+                    if (lines.length > 0 && !lines.includes(activeWidget.value)) {
+                        activeWidget.value = lines[0];
+                    }
+                };
+
+                // 3. Listener on the List Widget
+                listWidget.callback = (v) => {
+                    updateDropdownOptions();
+                    this.setDirtyCanvas(true, true);
+                };
+
+                // 4. Initial update on load
+                updateDropdownOptions();
+
+                // 5. Logic on Selection Change (The Radio Button Logic)
+                const originalActiveCallback = activeWidget.callback;
+                activeWidget.callback = (value) => {
+                    if (originalActiveCallback) originalActiveCallback(value);
+                    if (IS_SYNCING) return;
+
+                    const allGroups = listWidget.value.split("\n").map(s => s.trim()).filter(s => s);
+
+                    // Iterate over ALL groups defined in the list
+                    allGroups.forEach(groupName => {
+                        // Activate ONLY the selected group, deactivate others
+                        const isActive = (groupName === value);
+                        this.syncGroupState(app.graph, groupName, isActive);
+                    });
+                };
+            };
+
             // --- GROUP SELECTOR LOGIC (Simplified) ---
-            nodeType.prototype.setupGroupSelector = function() {
+            nodeType.prototype.setupGroupSelector = function () {
                 const comfyGroupWidget = this.widgets.find(w => w.name === "comfy_group");
                 if (!comfyGroupWidget) return;
 
@@ -125,39 +188,32 @@ app.registerExtension({
                 const refreshGroups = () => {
                     const groups = app.graph._groups || [];
                     const names = groups.map(g => g.title).filter(t => t);
-                    
+
                     // Always ensure "None" is first
                     const values = ["None", ...names];
                     comfyGroupWidget.options.values = values;
-                    
-                    // If current value is invalid, reset to None
-                    if (!values.includes(comfyGroupWidget.value)) {
-                         // Keep the value if it exists but list is temporarily empty (loading), 
-                         // or reset if truly invalid? Let's just update values for now.
-                         // comfyGroupWidget.value = "None"; 
-                    }
                 };
 
                 // Refresh immediately
                 refreshGroups();
 
                 // Refresh on interaction
-                this.onMouseEnter = function(e) {
+                this.onMouseEnter = function (e) {
                     refreshGroups();
                 };
             };
 
 
             // --- SYNC ENGINE ---
-            nodeType.prototype.syncGroupState = function(targetGraph, groupName, newState) {
+            nodeType.prototype.syncGroupState = function (targetGraph, groupName, newState) {
                 const wasSyncing = IS_SYNCING;
                 IS_SYNCING = true;
-                
+
                 try {
                     const traverse = (graph) => {
                         if (!graph || !graph._nodes) return;
                         for (const node of graph._nodes) {
-                            if (node === this) continue; 
+                            if (node === this) continue;
                             if (node.subgraph) traverse(node.subgraph);
 
                             if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE].includes(node.type)) {
@@ -178,16 +234,17 @@ app.registerExtension({
             };
 
             // --- TRIGGER LOGIC ---
-            nodeType.prototype.triggerBypassLogic = function(isActive) {
+            nodeType.prototype.triggerBypassLogic = function (isActive) {
                 if (this.type === HOLAF_BYPASSER_TYPE) {
                     this.handleStandardBypass(isActive);
                 } else if (this.type === HOLAF_GROUP_BYPASSER_TYPE) {
                     this.handleGroupBypass(isActive);
                 }
+                // HolafRemote and HolafRemoteSelector have no internal bypass logic to trigger
             };
 
             // --- LOGIC 1: STANDARD BYPASSER ---
-            nodeType.prototype.handleStandardBypass = function(isActive) {
+            nodeType.prototype.handleStandardBypass = function (isActive) {
                 const targetMode = isActive ? MODE_ALWAYS : MODE_BYPASS;
                 const graph = this.graph;
                 if (!graph) return;
@@ -218,19 +275,19 @@ app.registerExtension({
             };
 
             // --- LOGIC 2: GROUP BYPASSER ---
-            nodeType.prototype.handleGroupBypass = function(isActive) {
+            nodeType.prototype.handleGroupBypass = function (isActive) {
                 const comfyGroupWidget = this.widgets.find(w => w.name === "comfy_group");
                 const modeWidget = this.widgets.find(w => w.name === "bypass_mode");
-                
+
                 if (!comfyGroupWidget || !comfyGroupWidget.value || comfyGroupWidget.value === "None") return;
 
                 const targetGroupName = comfyGroupWidget.value;
-                const graph = this.graph; 
-                
+                const graph = this.graph;
+
                 const visualGroup = graph._groups.find(g => g.title === targetGroupName);
                 if (!visualGroup) return;
 
-                let inactiveMode = MODE_BYPASS; 
+                let inactiveMode = MODE_BYPASS;
                 if (modeWidget && modeWidget.value === "Mute") {
                     inactiveMode = MODE_MUTE;
                 }
@@ -248,7 +305,7 @@ app.registerExtension({
 
                     if (node.pos[0] >= gX && node.pos[0] <= gX + gW &&
                         node.pos[1] >= gY && node.pos[1] <= gY + gH) {
-                        
+
                         if (node.mode !== targetMode) {
                             node.mode = targetMode;
                         }
