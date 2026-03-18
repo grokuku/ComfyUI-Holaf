@@ -20,6 +20,7 @@ import numpy as np
 from PIL import Image
 import folder_paths
 import av
+import fractions
 
 class HolafSaveMedia:
     """
@@ -61,7 +62,7 @@ class HolafSaveMedia:
             "optional": {
                 "image": ("IMAGE",),
                 "audio": ("AUDIO",),
-                "prompt": ("STRING", {"forceInput": True}), # forceInput removes the textbox and creates only a slot
+                "prompt": ("STRING", {"forceInput": True}),
             },
             "hidden": {
                 "prompt_hidden": "PROMPT", 
@@ -114,15 +115,15 @@ class HolafSaveMedia:
         return workflow_json
 
     def _write_audio_to_stream(self, container, audio_stream, audio_np, sample_rate):
-        """Safely writes a numpy audio array to a PyAV stream using a resampler and FIFO buffer."""
+        """Safely writes a numpy audio array to a PyAV stream with strict PTS tracking."""
         channels, samples = audio_np.shape
         layout = 'stereo' if channels == 2 else 'mono'
         
-        # Create a single logical frame from the numpy array
         frame = av.AudioFrame.from_ndarray(audio_np, format='fltp', layout=layout)
         frame.sample_rate = sample_rate
+        frame.time_base = fractions.Fraction(1, sample_rate)
+        frame.pts = 0
         
-        # Resampler ensures format matches the codec's strict requirements
         resampler = av.AudioResampler(
             format=audio_stream.format, 
             layout=audio_stream.layout, 
@@ -131,24 +132,30 @@ class HolafSaveMedia:
         
         fifo = av.AudioFifo()
         
-        # Push to FIFO
         for resampled_frame in resampler.resample(frame):
             fifo.write(resampled_frame)
         for resampled_frame in resampler.resample(None): # Flush
             fifo.write(resampled_frame)
             
-        # Pull exactly what the codec needs
         frame_size = audio_stream.frame_size or 1024
+        
+        # Explicitly set stream time_base to avoid 'zero time' errors during muxing
+        audio_stream.time_base = fractions.Fraction(1, audio_stream.rate)
+        pts = 0
+        
         while fifo.samples >= frame_size:
             out_frame = fifo.read(frame_size)
-            out_frame.pts = None # Let PyAV handle presentation timestamps
+            out_frame.pts = pts
+            out_frame.time_base = audio_stream.time_base
+            pts += frame_size
             for packet in audio_stream.encode(out_frame):
                 container.mux(packet)
         
-        # Pull remaining
         if fifo.samples > 0:
             out_frame = fifo.read(fifo.samples)
-            out_frame.pts = None
+            out_frame.pts = pts
+            out_frame.time_base = audio_stream.time_base
+            pts += fifo.samples
             for packet in audio_stream.encode(out_frame):
                 container.mux(packet)
                 
