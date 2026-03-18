@@ -138,23 +138,23 @@ class HolafSaveMedia:
             fifo.write(resampled_frame)
             
         frame_size = audio_stream.frame_size or 1024
-        
-        # Explicitly set stream time_base to avoid 'zero time' errors during muxing
-        audio_stream.time_base = fractions.Fraction(1, audio_stream.rate)
         pts = 0
+        tb = fractions.Fraction(1, audio_stream.rate)
         
         while fifo.samples >= frame_size:
             out_frame = fifo.read(frame_size)
+            out_frame.sample_rate = audio_stream.rate
+            out_frame.time_base = tb
             out_frame.pts = pts
-            out_frame.time_base = audio_stream.time_base
             pts += frame_size
             for packet in audio_stream.encode(out_frame):
                 container.mux(packet)
         
         if fifo.samples > 0:
             out_frame = fifo.read(fifo.samples)
+            out_frame.sample_rate = audio_stream.rate
+            out_frame.time_base = tb
             out_frame.pts = pts
-            out_frame.time_base = audio_stream.time_base
             pts += fifo.samples
             for packet in audio_stream.encode(out_frame):
                 container.mux(packet)
