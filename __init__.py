@@ -19,8 +19,7 @@ import sys
 import hashlib
 
 # Node class imports
-from .nodes.holaf_save_image import HolafSaveImage
-from .nodes.holaf_save_video import HolafSaveVideo
+from .nodes.holaf_save_media import HolafSaveMedia
 from .nodes.holaf_tiled_ksampler import HolafTiledKSampler
 
 from .nodes.holaf_ksampler import HolafKSampler
@@ -52,14 +51,10 @@ from .nodes.holaf_auto_select_x2 import HolafAutoSelectX2
 # New Remote Selector Node
 from .nodes.holaf_remote_selector import HolafRemoteSelector
 
-# New Chunked VAE Decode Node
-from .nodes.holaf_chunked_vae_decode import HolafChunkedVAEDecode
-
 
 # Maps internal class names to the node's implementation.
 NODE_CLASS_MAPPINGS = {
-    "HolafSaveImage": HolafSaveImage,
-    "HolafSaveVideo": HolafSaveVideo,
+    "HolafSaveMedia": HolafSaveMedia,
     "HolafTiledKSampler": HolafTiledKSampler,
 
     "HolafKSampler": HolafKSampler,
@@ -85,14 +80,11 @@ NODE_CLASS_MAPPINGS = {
     "HolafBundleExtractor": HolafBundleExtractor,
     "HolafAutoSelectX2": HolafAutoSelectX2,
     "HolafRemoteSelector": HolafRemoteSelector,
-    
-    "HolafChunkedVAEDecode": HolafChunkedVAEDecode,
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "HolafSaveImage": "Save Image (Holaf)",
-    "HolafSaveVideo": "Save Video (Holaf)",
+    "HolafSaveMedia": "Save Media (Holaf)",
     "HolafTiledKSampler": "Tiled KSampler (Holaf)",
 
     "HolafKSampler": "KSampler (Holaf)",
@@ -118,8 +110,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafBundleExtractor": "Bundle Extractor (Holaf)",
     "HolafAutoSelectX2": "Auto Select x2 (Holaf)",
     "HolafRemoteSelector": "Remote Selector (Holaf)",
-    
-    "HolafChunkedVAEDecode": "Chunked VAE Decode (Holaf)",
 }
 
 # The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.
