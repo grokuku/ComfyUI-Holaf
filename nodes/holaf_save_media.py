@@ -20,7 +20,6 @@ import numpy as np
 from PIL import Image
 import folder_paths
 import av
-import fractions
 
 class HolafSaveMedia:
     """
@@ -115,14 +114,13 @@ class HolafSaveMedia:
         return workflow_json
 
     def _write_audio_to_stream(self, container, audio_stream, audio_np, sample_rate):
-        """Safely writes a numpy audio array to a PyAV stream with strict PTS tracking."""
+        """Safely writes a numpy audio array to a PyAV stream."""
         channels, samples = audio_np.shape
         layout = 'stereo' if channels == 2 else 'mono'
         
         frame = av.AudioFrame.from_ndarray(audio_np, format='fltp', layout=layout)
         frame.sample_rate = sample_rate
-        frame.time_base = fractions.Fraction(1, sample_rate)
-        frame.pts = 0
+        frame.pts = None # PyAV computes PTS automatically when None
         
         resampler = av.AudioResampler(
             format=audio_stream.format, 
@@ -138,24 +136,16 @@ class HolafSaveMedia:
             fifo.write(resampled_frame)
             
         frame_size = audio_stream.frame_size or 1024
-        pts = 0
-        tb = fractions.Fraction(1, audio_stream.rate)
         
         while fifo.samples >= frame_size:
             out_frame = fifo.read(frame_size)
-            out_frame.sample_rate = audio_stream.rate
-            out_frame.time_base = tb
-            out_frame.pts = pts
-            pts += frame_size
+            out_frame.pts = None
             for packet in audio_stream.encode(out_frame):
                 container.mux(packet)
         
         if fifo.samples > 0:
             out_frame = fifo.read(fifo.samples)
-            out_frame.sample_rate = audio_stream.rate
-            out_frame.time_base = tb
-            out_frame.pts = pts
-            pts += fifo.samples
+            out_frame.pts = None
             for packet in audio_stream.encode(out_frame):
                 container.mux(packet)
                 
@@ -269,7 +259,7 @@ class HolafSaveMedia:
                 v_codec = 'libx264' if v_container == 'mp4' else 'libvpx-vp9'
                 container = av.open(video_path, mode='w')
 
-            # Setup Video Stream
+            # --- 1. SETUP VIDEO STREAM ---
             v_stream = container.add_stream(v_codec, rate=v_fps)
             v_stream.width = width
             v_stream.height = height
@@ -280,29 +270,23 @@ class HolafSaveMedia:
                 v_stream.pix_fmt = 'yuv420p'
                 v_stream.options = {'crf': str(v_quality)}
 
-            # Write Video Frames
-            for i in range(batch_size):
-                frame_data = img_array[i]
-                frame = av.VideoFrame.from_ndarray(frame_data, format=input_pixel_format)
-                for packet in v_stream.encode(frame):
-                    container.mux(packet)
-            for packet in v_stream.encode():
-                container.mux(packet)
-
-            # Handle Audio Multiplexing
+            # --- 2. SETUP AUDIO STREAM (CRITICAL: MUST BE DONE BEFORE MUXING VIDEO) ---
+            a_stream = None
+            audio_np_truncated = None
+            sample_rate = 44100
+            
             if audio_data is not None and v_codec != 'gif':
                 audio_tensor = audio_data.get("waveform")
                 if audio_tensor is not None and audio_tensor.dim() >= 3:
                     sample_rate = audio_data.get("sample_rate", 44100)
-                    # ComfyUI audio shape: [Batch, Channels, Samples]. Take first batch.
-                    audio_np = audio_tensor[0].cpu().numpy().astype(np.float32)
+                    audio_np_truncated = audio_tensor[0].cpu().numpy().astype(np.float32)
                     
-                    if audio_np.size > 0:
+                    if audio_np_truncated.size > 0:
                         # Truncate audio to match video duration
                         video_duration_sec = batch_size / v_fps
                         max_samples = int(video_duration_sec * sample_rate)
-                        if audio_np.shape[1] > max_samples:
-                            audio_np = audio_np[:, :max_samples]
+                        if audio_np_truncated.shape[1] > max_samples:
+                            audio_np_truncated = audio_np_truncated[:, :max_samples]
 
                         # Determine Audio Codec for muxing
                         a_codec = 'aac' if v_container == 'mp4' else 'libopus'
@@ -310,7 +294,18 @@ class HolafSaveMedia:
                         a_bitrate = kwargs.get("audio_bitrate_kbps", 192) * 1000
                         a_stream.bit_rate = a_bitrate
 
-                        self._write_audio_to_stream(container, a_stream, audio_np, sample_rate)
+            # --- 3. WRITE VIDEO FRAMES ---
+            for i in range(batch_size):
+                frame_data = img_array[i]
+                frame = av.VideoFrame.from_ndarray(frame_data, format=input_pixel_format)
+                for packet in v_stream.encode(frame):
+                    container.mux(packet)
+            for packet in v_stream.encode(): # Flush video
+                container.mux(packet)
+
+            # --- 4. WRITE AUDIO FRAMES ---
+            if a_stream is not None and audio_np_truncated is not None:
+                self._write_audio_to_stream(container, a_stream, audio_np_truncated, sample_rate)
 
             container.close()
             workflow_json = self._save_metadata(output_path, base_name, prompt, save_prompt, save_workflow, prompt_hidden, extra_pnginfo)
