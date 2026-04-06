@@ -14,6 +14,8 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import torch
+import math
+import torch.nn.functional as F
 import folder_paths
 import comfy.model_management
 import comfy.utils
@@ -67,7 +69,7 @@ class UpscaleImageHolaf:
 
         # If no model is selected, simply pass the image through without changes.
         if model_name == "None" or not model_name:
-             return (image, "None")
+                return (image, "None")
 
         # --- Model Loading ---
         # Load the selected upscale model. Spandrel is used here for its broad
@@ -80,7 +82,8 @@ class UpscaleImageHolaf:
         try:
             sd = comfy.utils.load_torch_file(model_path, safe_load=True)
             upscale_model_descriptor = ModelLoader().load_from_state_dict(sd)
-            upscale_model = upscale_model_descriptor.model
+            # FIX: Keep the Spandrel descriptor to preserve padding logic for models like SwinIR/HAT
+            upscale_model = upscale_model_descriptor
             upscale_model.eval()
         except Exception as e:
             raise RuntimeError(f"Failed to load upscale model '{model_name}': {e}") from e
@@ -109,23 +112,39 @@ class UpscaleImageHolaf:
             target_height = max(multiple, target_height)
 
         # --- Two-Stage Upscaling ---
-        # FIX: Explicitly cast the input tensor to float32 (torch.float) to prevent type mismatch errors.
+        # Explicitly cast the input tensor to float32 to prevent type mismatch errors.
         image = image.float()
 
         # Stage 1: Upscale using the loaded model's native scale factor.
         image_for_model = image.movedim(-1, 1) # Permute to NCHW for model input
+        
+        # FIX: Handle Alpha channel. Upscale models generally only accept 3 channels (RGB).
+        if image_for_model.shape[1] > 3:
+            rgb_image = image_for_model[:, 0:3, :, :]
+            alpha_channel = image_for_model[:, 3:4, :, :]
+        else:
+            rgb_image = image_for_model
+            alpha_channel = None
+
         try:
             with torch.no_grad():
-                 upscale_model.to(device)
-                 model_scale = upscale_model_descriptor.scale
-                 scaled_img = comfy.utils.tiled_scale(
-                      image_for_model,
-                      lambda x: upscale_model(x.to(device)).cpu(),
-                      tile_x=512, tile_y=512, overlap=64,
-                      upscale_amount=model_scale
-                 )
+                    upscale_model.to(device)
+                    model_scale = upscale_model_descriptor.scale
+                    scaled_rgb = comfy.utils.tiled_scale(
+                        rgb_image,
+                        lambda x: upscale_model(x.to(device)).cpu(),
+                        tile_x=512, tile_y=512, overlap=64,
+                        upscale_amount=model_scale
+                    )
         except Exception as e:
-             raise RuntimeError(f"Failed to upscale image with model '{model_name}': {e}") from e
+                raise RuntimeError(f"Failed to upscale image with model '{model_name}': {e}") from e
+
+        # Re-attach alpha channel if it existed
+        if alpha_channel is not None:
+            scaled_alpha = F.interpolate(alpha_channel, size=(scaled_rgb.shape[2], scaled_rgb.shape[3]), mode="bilinear")
+            scaled_img = torch.cat([scaled_rgb, scaled_alpha], dim=1)
+        else:
+            scaled_img = scaled_rgb
 
         upscaled_image = scaled_img.movedim(1, -1) # Permute back to NHWC
 
@@ -133,46 +152,47 @@ class UpscaleImageHolaf:
         current_height, current_width = upscaled_image.shape[1:3]
 
         if current_width != target_width or current_height != target_height:
-             resizer = ImageScale()
+                resizer = ImageScale()
 
-             if resize_mode == "stretch":
-                 # Direct resize to target dimensions (ignoring aspect ratio changes)
-                 upscaled_image = resizer.upscale(upscaled_image, upscale_method, target_width, target_height, "disabled")[0]
+                if resize_mode == "stretch":
+                    # Direct resize to target dimensions (ignoring aspect ratio changes)
+                    upscaled_image = resizer.upscale(upscaled_image, upscale_method, target_width, target_height, "disabled")[0]
 
-             elif resize_mode == "crop":
-                 # Scale to cover target, then crop center
-                 scale_w = target_width / current_width
-                 scale_h = target_height / current_height
-                 scale = max(scale_w, scale_h)
+                elif resize_mode == "crop":
+                    # Scale to cover target, then crop center
+                    scale_w = target_width / current_width
+                    scale_h = target_height / current_height
+                    scale = max(scale_w, scale_h)
 
-                 temp_w = int(current_width * scale)
-                 temp_h = int(current_height * scale)
+                    # FIX: Use math.ceil to prevent rounding issues leading to negative slice indices
+                    temp_w = math.ceil(current_width * scale)
+                    temp_h = math.ceil(current_height * scale)
 
-                 # Upscale first
-                 upscaled_image = resizer.upscale(upscaled_image, upscale_method, temp_w, temp_h, "disabled")[0]
+                    # Upscale first
+                    upscaled_image = resizer.upscale(upscaled_image, upscale_method, temp_w, temp_h, "disabled")[0]
 
-                 # Then crop
-                 x_start = (temp_w - target_width) // 2
-                 y_start = (temp_h - target_height) // 2
-                 upscaled_image = upscaled_image[:, y_start:y_start+target_height, x_start:x_start+target_width, :]
+                    # Then crop
+                    x_start = max(0, (temp_w - target_width) // 2)
+                    y_start = max(0, (temp_h - target_height) // 2)
+                    upscaled_image = upscaled_image[:, y_start:y_start+target_height, x_start:x_start+target_width, :]
 
-             elif resize_mode == "pad":
-                 # Scale to fit inside target, then pad with black
-                 scale_w = target_width / current_width
-                 scale_h = target_height / current_height
-                 scale = min(scale_w, scale_h)
+                elif resize_mode == "pad":
+                    # Scale to fit inside target, then pad with black
+                    scale_w = target_width / current_width
+                    scale_h = target_height / current_height
+                    scale = min(scale_w, scale_h)
 
-                 temp_w = int(current_width * scale)
-                 temp_h = int(current_height * scale)
+                    temp_w = int(current_width * scale)
+                    temp_h = int(current_height * scale)
 
-                 # Upscale first
-                 upscaled_image = resizer.upscale(upscaled_image, upscale_method, temp_w, temp_h, "disabled")[0]
+                    # Upscale first
+                    upscaled_image = resizer.upscale(upscaled_image, upscale_method, temp_w, temp_h, "disabled")[0]
 
-                 # Then pad
-                 new_image = torch.zeros((upscaled_image.shape[0], target_height, target_width, upscaled_image.shape[3]), dtype=upscaled_image.dtype, device=upscaled_image.device)
-                 x_start = (target_width - temp_w) // 2
-                 y_start = (target_height - temp_h) // 2
-                 new_image[:, y_start:y_start+temp_h, x_start:x_start+temp_w, :] = upscaled_image
-                 upscaled_image = new_image
+                    # Then pad
+                    new_image = torch.zeros((upscaled_image.shape[0], target_height, target_width, upscaled_image.shape[3]), dtype=upscaled_image.dtype, device=upscaled_image.device)
+                    x_start = max(0, (target_width - temp_w) // 2)
+                    y_start = max(0, (target_height - temp_h) // 2)
+                    new_image[:, y_start:y_start+temp_h, x_start:x_start+temp_w, :] = upscaled_image
+                    upscaled_image = new_image
 
         return (upscaled_image, model_name)
