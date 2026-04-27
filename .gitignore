@@ -1,0 +1,23 @@
+# Nucleus-Image model data (~80 GB)
+# Delete this folder to fully remove the model
+nodes/nucleus_image_model/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg

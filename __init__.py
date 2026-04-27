@@ -51,6 +51,17 @@ from .nodes.holaf_auto_select_x2 import HolafAutoSelectX2
 # New Remote Selector Node
 from .nodes.holaf_remote_selector import HolafRemoteSelector
 
+# Nucleus-Image node (optional — requires diffusers >= 0.38)
+# Protected import: if diffusers is not installed or too old, the node is
+# simply skipped so the rest of the pack keeps working.
+try:
+    from .nodes.holaf_nucleus_image import HolafNucleusImage
+    _nucleus_image_available = True
+except ImportError:
+    _nucleus_image_available = False
+    print("⚠️  Holaf Nucleus-Image node skipped: diffusers not installed or too old.")
+    print("   Install with: pip install git+https://github.com/huggingface/diffusers")
+
 
 # Maps internal class names to the node's implementation.
 NODE_CLASS_MAPPINGS = {
@@ -112,11 +123,17 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafRemoteSelector": "Remote Selector (Holaf)",
 }
 
+# Conditionally register the Nucleus-Image node
+if _nucleus_image_available:
+    NODE_CLASS_MAPPINGS["HolafNucleusImage"] = HolafNucleusImage
+    NODE_DISPLAY_NAME_MAPPINGS["HolafNucleusImage"] = "Nucleus-Image (Holaf)"
+
 # The WEB_DIRECTORY tells ComfyUI where to look for JavaScript files that correspond to the Python nodes.
 WEB_DIRECTORY = "./js"
 
 # Indicate successful loading in the console.
-print("✅ Holaf Custom Nodes initialized")
+_nucleus_status = "✅ Nucleus-Image node loaded." if _nucleus_image_available else "⚠️  Nucleus-Image node skipped (missing deps)."
+print(f"✅ Holaf Custom Nodes initialized  {_nucleus_status}")
 
 # Export mappings for ComfyUI to use.
 __all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS', 'WEB_DIRECTORY']

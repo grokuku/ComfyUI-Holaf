@@ -13,8 +13,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+# --- Core dependencies (all nodes) ---
 numpy
 Pillow
 spandrel
 requests
 opencv-python
+
+# --- Nucleus-Image node dependencies (optional) ---
+# The NucleusMoEImagePipeline class requires diffusers >= 0.38 (main branch).
+# If the stable release is not yet 0.38+, install from git:
+#   pip install git+https://github.com/huggingface/diffusers
+diffusers>=0.38
+transformers>=4.57
+accelerate
+huggingface_hub
+sentencepiece
