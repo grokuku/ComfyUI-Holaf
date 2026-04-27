@@ -400,10 +400,11 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool,
             vram_threshold * 100, len(blocks),
         )
 
-        # Use enable_sequential_cpu_offload for text_encoder and VAE handling.
-        # The pipeline's internal model_cpu_offload_seq = "text_encoder->transformer->vae"
-        # and maybe_free_model_hooks() will handle moving those components.
-        # We set a flag so the pipeline knows our transformer is managed externally.
+        # Only offload text_encoder and VAE sequentially.
+        # The transformer is managed exclusively by LayerLRUOffloader hooks.
+        # Including "transformer" in the offload sequence would conflict with
+        # our LRU block-level hooks, causing double-management of GPU memory.
+        pipe.model_cpu_offload_seq = "text_encoder->vae"
         pipe.enable_sequential_cpu_offload()
 
     elif offload_mode == "sequential_offload":
@@ -468,9 +469,6 @@ class HolafNucleusImage:
     A 17B sparse MoE diffusion transformer (~2B active per forward pass).
     This is a standalone "black box" node — it auto-downloads the model on
     first use and stores all files in its own directory for easy cleanup.
-
-    Use the 'Resolution Preset (Holaf)' node with model_type='Nucleus-Image'
-    for curated resolutions matching the model's training aspect ratios.
     """
 
     @classmethod
@@ -505,7 +503,8 @@ class HolafNucleusImage:
                 ),
                 "vram_threshold": (
                     "FLOAT",
-                    {"default": 0.75, "min": 0.3, "max": 0.95, "step": 0.05},
+                    {"default": 0.83, "min": 0.3, "max": 0.95, "step": 0.05,
+                     "tooltip": "VRAM limit for LRU offload. 0.83 ≈ 10 GB on a 12 GB GPU."},
                 ),
                 "enable_kv_cache": ("BOOLEAN", {"default": True}),
                 "clean_vram_before": ("BOOLEAN", {"default": True}),
