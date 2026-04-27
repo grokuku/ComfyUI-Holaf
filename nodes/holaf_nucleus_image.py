@@ -41,7 +41,6 @@ The ``NucleusMoEImagePipeline`` class is only available in diffusers >= 0.38
 import os
 import gc
 import logging
-from collections import OrderedDict
 
 import numpy as np
 import torch
@@ -67,190 +66,84 @@ _cached_kv_cache = None
 _cached_vram_threshold = None
 
 
-# ---------------------------------------------------------------------------
-# Smart LRU Layer Offloader
-# ---------------------------------------------------------------------------
+# Block-discovery logic shared by the helpers below.
 
-class LayerLRUOffloader:
+def _discover_transformer_blocks(transformer: torch.nn.Module) -> list:
     """
-    Manages GPU memory for transformer blocks using an LRU strategy.
+    Discover the list of sequential transformer blocks.
 
-    Instead of moving every block back to CPU after each forward pass
-    (slow, like ``enable_sequential_cpu_offload``), this manager keeps
-    blocks on GPU while VRAM is below a configurable threshold. When
-    VRAM exceeds the threshold, the least-recently-used block is evicted
-    to CPU, freeing space for the next block that needs to execute.
-
-    This provides a sweet spot between speed and VRAM usage:
-    - Frequently used blocks stay on GPU (fast)
-    - Rarely used blocks are offloaded (saves VRAM)
-    - Only actual usage triggers GPU↔CPU transfers
+    NucleusMoEImageTransformer2DModel stores them as
+    ``self.transformer_blocks`` (nn.ModuleList).
+    Falls back to other common names.
     """
+    for attr_name in (
+        "transformer_blocks",   # Nucleus-Image, FLUX, SD3
+        "blocks",              # Some architectures
+        "layers",              # Common alternative
+    ):
+        blocks = getattr(transformer, attr_name, None)
+        if blocks is not None and isinstance(blocks, torch.nn.ModuleList) and len(blocks) > 1:
+            return list(blocks)
 
-    def __init__(self, vram_threshold: float = 0.75):
-        self.vram_threshold = vram_threshold
-        self.lru: OrderedDict = OrderedDict()  # block index -> block module
-        self.on_gpu: dict = {}                  # block index -> bool
-        self._hooks_installed = False
+    # Last resort: look for a ModuleList among direct children
+    for name, child in transformer.named_children():
+        if isinstance(child, torch.nn.ModuleList) and len(child) > 1:
+            return list(child)
 
-    # ------------------------------------------------------------------
-    # VRAM monitoring
-    # ------------------------------------------------------------------
+    return []
 
-    def vram_fraction(self) -> float:
-        """Return current VRAM usage as a fraction of total GPU memory."""
-        if not torch.cuda.is_available():
-            return 1.0
-        total = torch.cuda.get_device_properties(0).total_memory
-        reserved = torch.cuda.memory_reserved(0)
-        return reserved / total
 
-    # ------------------------------------------------------------------
-    # LRU operations
-    # ------------------------------------------------------------------
+def _move_shell_to_gpu(transformer: torch.nn.Module, blocks: list) -> None:
+    """Move only non-block parameters / buffers to GPU."""
+    block_param_ids = set()
+    block_buffer_ids = set()
+    for block in blocks:
+        for p in block.parameters():
+            block_param_ids.add(id(p))
+        for b in block.buffers():
+            block_buffer_ids.add(id(b))
 
-    def touch(self, idx: int, block: torch.nn.Module) -> None:
-        """Mark a block as recently used and ensure it is on GPU."""
-        if self.on_gpu.get(idx, False):
-            # Already on GPU — just update LRU order
-            self.lru.move_to_end(idx)
-            return
+    for _name, param in transformer.named_parameters():
+        if id(param) not in block_param_ids and param.device.type != "cuda":
+            param.data = param.data.to("cuda")
+    for _name, buf in transformer.named_buffers():
+        if id(buf) not in block_buffer_ids and buf.device.type != "cuda":
+            buf.data = buf.data.to("cuda")
 
-        # Move block to GPU
-        block.to("cuda")
-        self.on_gpu[idx] = True
-        self.lru[idx] = block
 
-        # Evict if VRAM is getting tight
-        self._evict_if_needed(exclude=idx)
+def _materialize_pipeline_to_cpu(pipe) -> None:
+    """
+    Materialize every meta tensor in the pipeline to CPU.
 
-    def _evict_if_needed(self, exclude: int = None) -> None:
-        """Evict LRU blocks to CPU until VRAM is below threshold."""
-        gc.collect()
-        torch.cuda.empty_cache()
+    Accelerate's cpu_offload replaces module params with meta tensors
+    and stores the real data in a CpuOffloadedStateDict.  This helper
+    triggers the pre_forward hook for each component to restore the
+    state dict to CPU, then removes the hook so we can manage placement
+    ourselves.
+    """
+    import accelerate.hooks
 
-        while self.vram_fraction() > self.vram_threshold:
-            evicted = False
-            for idx in list(self.lru.keys()):
-                if idx != exclude and self.on_gpu.get(idx, False):
-                    block = self.lru[idx]
-                    block.to("cpu")
-                    self.on_gpu[idx] = False
-                    del self.lru[idx]
-                    gc.collect()
-                    torch.cuda.empty_cache()
-                    evicted = True
-                    logger.debug(
-                        "[Nucleus-Image LRU] Evicted block %d to CPU (VRAM: %.1f%%)",
-                        idx, self.vram_fraction() * 100,
-                    )
-                    break
-            if not evicted:
-                break
+    for attr_name in dir(pipe):
+        component = getattr(pipe, attr_name, None)
+        if not isinstance(component, torch.nn.Module):
+            continue
+        if not any(p.device.type == "meta" for p in component.parameters()):
+            continue
 
-    def offload_all(self) -> None:
-        """Move all tracked blocks back to CPU and clear state."""
-        for idx, block in list(self.lru.items()):
-            if self.on_gpu.get(idx, False):
-                block.to("cpu")
-                self.on_gpu[idx] = False
-        self.lru.clear()
-        gc.collect()
-        torch.cuda.empty_cache()
+        # The component has an accelerate hook with an offloaded state dict.
+        for _name, param in component.named_parameters():
+            if param.device.type != "meta":
+                continue
+            # Retrieve the real tensor from the hook's state dict.
+            hook = getattr(component, "_hf_hook", None)
+            if hook is not None and hasattr(hook, "state_dict"):
+                sd = hook.state_dict
+                if _name in sd:
+                    param.data = sd[_name].to("cpu", copy=False)
 
-    # ------------------------------------------------------------------
-    # Hook management
-    # ------------------------------------------------------------------
-
-    def install_hooks(self, transformer: torch.nn.Module) -> bool:
-        """
-        Install pre/post forward hooks on each transformer block
-        to manage GPU memory transparently during the denoising loop.
-
-        Returns True if hooks were installed on individual blocks,
-        False if the transformer blocks could not be discovered.
-        """
-        blocks = self._discover_blocks(transformer)
-        if not blocks:
-            logger.warning(
-                "[Nucleus-Image LRU] Could not discover transformer blocks. "
-                "Falling back to whole-transformer offloading."
-            )
-            return False
-
-        self.lru.clear()
-        self.on_gpu.clear()
-
-        for i, block in enumerate(blocks):
-            # Store references on the block for the hook closures
-            block._lru_idx = i
-            block._lru_offloader = self
-
-            # Pre-forward: move block to GPU before it executes
-            block.register_forward_pre_hook(self._pre_forward_hook, with_kwargs=True)
-            # Post-forward: check VRAM after block executed, evict if needed
-            block.register_forward_hook(self._post_forward_hook)
-
-        self._hooks_installed = True
-        logger.info(
-            "[Nucleus-Image LRU] Installed hooks on %d transformer blocks.",
-            len(blocks),
-        )
-        return True
-
-    def uninstall_hooks(self, transformer: torch.nn.Module) -> None:
-        """Remove LRU hooks and clean up block attributes."""
-        blocks = self._discover_blocks(transformer)
-        for block in blocks:
-            if hasattr(block, '_lru_idx'):
-                del block._lru_idx
-            if hasattr(block, '_lru_offloader'):
-                del block._lru_offloader
-        # Note: PyTorch doesn't support removing specific hooks easily,
-        # but the hooks will be no-ops if _lru_offloader is deleted.
-        self._hooks_installed = False
-
-    @staticmethod
-    def _pre_forward_hook(module, args, kwargs):
-        """Move the block to GPU before its forward pass."""
-        offloader = getattr(module, '_lru_offloader', None)
-        if offloader is not None:
-            idx = module._lru_idx
-            offloader.touch(idx, module)
-        return args, kwargs
-
-    @staticmethod
-    def _post_forward_hook(module, input, output):
-        """After forward, evict LRU blocks if VRAM exceeds threshold."""
-        offloader = getattr(module, '_lru_offloader', None)
-        if offloader is not None:
-            offloader._evict_if_needed(exclude=module._lru_idx)
-        return output
-
-    @staticmethod
-    def _discover_blocks(transformer: torch.nn.Module) -> list:
-        """
-        Discover the list of sequential transformer blocks.
-
-        NucleusMoEImageTransformer2DModel stores them as
-        ``self.transformer_blocks`` (nn.ModuleList).
-        Falls back to other common names.
-        """
-        for attr_name in (
-            "transformer_blocks",   # Nucleus-Image, FLUX, SD3
-            "blocks",              # Some architectures
-            "layers",              # Common alternative
-        ):
-            blocks = getattr(transformer, attr_name, None)
-            if blocks is not None and isinstance(blocks, torch.nn.ModuleList) and len(blocks) > 1:
-                return list(blocks)
-
-        # Last resort: look for a ModuleList among direct children
-        for name, child in transformer.named_children():
-            if isinstance(child, torch.nn.ModuleList) and len(child) > 1:
-                return list(child)
-
-        return []
+        # Remove the accelerate hook so it doesn't interfere.
+        if hasattr(component, "_hf_hook"):
+            accelerate.hooks.remove_hook_from_module(component)
 
 
 # ---------------------------------------------------------------------------
@@ -318,10 +211,6 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool,
         logger.info(
             "[Nucleus-Image] Settings changed. Reloading pipeline.",
         )
-        # Remove LRU hooks if they were installed
-        if hasattr(_cached_pipeline, '_lru_offloader') and _cached_pipeline._lru_offloader is not None:
-            _cached_pipeline._lru_offloader.offload_all()
-            _cached_pipeline._lru_offloader.uninstall_hooks(_cached_pipeline.transformer)
         del _cached_pipeline
         _cached_pipeline = None
         gc.collect()
@@ -348,80 +237,71 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool,
     )
 
     # --- Apply VRAM offloading strategy ---
-    lru_offloader = None
-
     if offload_mode == "lru_offload":
-        # --- LRU-aware block-level offloading ---
+        # --- Per-block offloading via accelerate's cpu_offload ---
         # Strategy:
-        #   1. Move all components to CPU first.
-        #   2. Identify transformer "shell" params (embeddings, norms, proj_out)
-        #      versus block params.  Only move the shell to GPU — the full
-        #      transformer (~34 GB bf16) does NOT fit on a 12 GB card.
-        #   3. Install forward hooks on each block so they are moved to GPU
-        #      on-demand and evicted LRU when VRAM exceeds the threshold.
-        #   4. Text encoder and VAE are sequentially offloaded for their
-        #      respective phases.
-        lru_offloader = LayerLRUOffloader(vram_threshold=vram_threshold)
+        #   1. Load pipeline, materialize everything to CPU.
+        #   2. Discover transformer blocks and offload each one individually
+        #      with accelerate.cpu_offload.  This handles meta-tensor
+        #      materialization correctly (unlike manual .to("cuda")).
+        #   3. Move the transformer "shell" (embeddings, norms, proj_out)
+        #      to GPU permanently — these are small (~1-2 GB).
+        #   4. Text encoder and VAE are also managed by cpu_offload for
+        #      their respective phases.
+        #
+        # Peak VRAM on a 12 GB card:
+        #   shell (~1-2 GB) + one active block (~4 GB)
+        #   + text_encoder / VAE (~1 GB on demand) ≈ 6-7 GB
 
-        # Move everything to CPU first
-        pipe.to("cpu")
+        # --- materialize on CPU ------------------------------------------
+        # Use accelerate's load_checkpoint_and_dispatch-style materialization.
+        # Calling .to("cpu") may fail on meta tensors (PyTorch >= 2.x).
+        try:
+            pipe.to("cpu")
+        except NotImplementedError:
+            # Some tensors are still on "meta" — materialize via accelerate.
+            _materialize_pipeline_to_cpu(pipe)
+
         gc.collect()
         torch.cuda.empty_cache()
 
-        # Discover blocks
-        blocks = LayerLRUOffloader._discover_blocks(pipe.transformer)
+        # --- discover blocks ---------------------------------------------
+        blocks = _discover_transformer_blocks(pipe.transformer)
 
         if blocks:
-            # Collect parameter and buffer ids that belong to blocks.
-            # Everything else is the "shell" (embeddings, norms, proj_out).
-            block_param_ids = set()
-            block_buffer_ids = set()
-            for block in blocks:
-                for p in block.parameters():
-                    block_param_ids.add(id(p))
-                for b in block.buffers():
-                    block_buffer_ids.add(id(b))
+            # Offload each block individually with accelerate.
+            # This is safe: cpu_offload saves the state dict to CPU,
+            # replaces params with meta, and hooks pre_forward to load
+            # back to GPU before the block executes.
+            from accelerate import cpu_offload as _accel_cpu_offload
+            for _i, block in enumerate(blocks):
+                _accel_cpu_offload(block, execution_device="cuda")
 
-            # Move only shell parameters / buffers to GPU.
-            # This avoids the OOM that would be caused by
-            # ``pipe.transformer.to("cuda")`` on cards < 34 GB.
-            for _name, param in pipe.transformer.named_parameters():
-                if id(param) not in block_param_ids:
-                    param.data = param.data.to("cuda")
-            for _name, buf in pipe.transformer.named_buffers():
-                if id(buf) not in block_buffer_ids:
-                    buf.data = buf.data.to("cuda")
+            # Move shell (non-block) parameters to GPU.
+            # They stay there for the whole denoising loop.
+            _move_shell_to_gpu(pipe.transformer, blocks)
 
             logger.info(
-                "[Nucleus-Image LRU] Transformer shell on GPU, %d blocks on CPU.",
+                "[Nucleus-Image LRU] Shell on GPU, %d blocks managed by accelerate cpu_offload.",
                 len(blocks),
             )
+
+            # --- text encoder & VAE --------------------------------------
+            # Also managed by accelerate cpu_offload (instead of calling
+            # enable_sequential_cpu_offload, which may interfere with the
+            # transformer's per-block hooks).
+            _accel_cpu_offload(pipe.text_encoder, execution_device="cuda")
+            if hasattr(pipe, "text_encoder_2") and pipe.text_encoder_2 is not None:
+                _accel_cpu_offload(pipe.text_encoder_2, execution_device="cuda")
+            _accel_cpu_offload(pipe.vae, execution_device="cuda")
+
         else:
-            # Fallback: keep entire transformer on CPU, let hooks move it
-            # as a whole before each forward (equivalent to sequential mode).
-            pipe.transformer.to("cpu")
+            # Fallback: offload entire transformer as one unit.
+            pipe.enable_sequential_cpu_offload()
             logger.warning(
-                "[Nucleus-Image LRU] Could not split transformer shell/blocks. "
-                "Using whole-transformer offloading (slower)."
+                "[Nucleus-Image LRU] Could not discover blocks — "
+                "falling back to sequential offload."
             )
-
-        # Install the LRU hooks on transformer blocks
-        lru_offloader.install_hooks(pipe.transformer)
-
-        # Store the offloader on the pipeline for cleanup
-        pipe._lru_offloader = lru_offloader
-
-        logger.info(
-            "[Nucleus-Image] VRAM mode: LRU offload (threshold %.0f%%, %d blocks).",
-            vram_threshold * 100, len(blocks),
-        )
-
-        # Only offload text_encoder and VAE sequentially.
-        # The transformer is managed exclusively by LayerLRUOffloader hooks.
-        # Including "transformer" in the offload sequence would conflict with
-        # our LRU block-level hooks, causing double-management of GPU memory.
-        pipe.model_cpu_offload_seq = "text_encoder->vae"
-        pipe.enable_sequential_cpu_offload()
 
     elif offload_mode == "sequential_offload":
         # Block-by-block, always moved back to CPU after each forward.
@@ -460,10 +340,6 @@ def _unload_pipeline():
     """Fully unload the cached pipeline and free GPU memory."""
     global _cached_pipeline, _cached_offload_mode, _cached_kv_cache, _cached_vram_threshold
     if _cached_pipeline is not None:
-        # Clean up LRU offloader if present
-        if hasattr(_cached_pipeline, '_lru_offloader') and _cached_pipeline._lru_offloader is not None:
-            _cached_pipeline._lru_offloader.offload_all()
-            _cached_pipeline._lru_offloader.uninstall_hooks(_cached_pipeline.transformer)
         del _cached_pipeline
         _cached_pipeline = None
         _cached_offload_mode = None
