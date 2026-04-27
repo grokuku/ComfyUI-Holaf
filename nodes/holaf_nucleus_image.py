@@ -108,7 +108,8 @@ def _block_to_cpu(module, input, output):
 
 
 def _transformer_args_to_cuda(module, args, kwargs):
-    """Pre-forward on the *transformer*: move all tensor args to CUDA."""
+    """Pre-forward on the *transformer*: move args & shell to CUDA."""
+    # --- args ---------------------------------------------------------
     args = tuple(
         a.to("cuda") if isinstance(a, torch.Tensor) else a for a in args
     )
@@ -116,11 +117,30 @@ def _transformer_args_to_cuda(module, args, kwargs):
         k: v.to("cuda") if isinstance(v, torch.Tensor) else v
         for k, v in kwargs.items()
     }
+    # --- shell params -------------------------------------------------
+    bp = getattr(module, "_holaf_block_param_ids", set())
+    bb = getattr(module, "_holaf_block_buffer_ids", set())
+    for _name, param in module.named_parameters():
+        if id(param) not in bp and param.device.type != "cuda":
+            param.data = param.data.to("cuda")
+    for _name, buf in module.named_buffers():
+        if id(buf) not in bb and buf.device.type != "cuda":
+            buf.data = buf.data.to("cuda")
     return args, kwargs
 
 
 def _transformer_out_to_cpu(module, input, output):
-    """Post-forward on the *transformer*: move results back to CPU."""
+    """Post-forward on the *transformer*: move output & shell to CPU."""
+    # --- shell params -------------------------------------------------
+    bp = getattr(module, "_holaf_block_param_ids", set())
+    bb = getattr(module, "_holaf_block_buffer_ids", set())
+    for _name, param in module.named_parameters():
+        if id(param) not in bp and param.device.type == "cuda":
+            param.data = param.data.to("cpu")
+    for _name, buf in module.named_buffers():
+        if id(buf) not in bb and buf.device.type == "cuda":
+            buf.data = buf.data.to("cpu")
+    # --- output -------------------------------------------------------
     if isinstance(output, torch.Tensor):
         return output.to("cpu")
     if isinstance(output, (tuple, list)):
@@ -137,25 +157,6 @@ def _hook_module_cpu_gpu(module: torch.nn.Module) -> None:
     """
     module.register_forward_pre_hook(_block_to_cuda, with_kwargs=True)
     module.register_forward_hook(_block_to_cpu)
-
-
-
-def _move_shell_to_gpu(transformer: torch.nn.Module, blocks: list) -> None:
-    """Move only non-block parameters / buffers to GPU."""
-    block_param_ids = set()
-    block_buffer_ids = set()
-    for block in blocks:
-        for p in block.parameters():
-            block_param_ids.add(id(p))
-        for b in block.buffers():
-            block_buffer_ids.add(id(b))
-
-    for _name, param in transformer.named_parameters():
-        if id(param) not in block_param_ids and param.device.type != "cuda":
-            param.data = param.data.to("cuda")
-    for _name, buf in transformer.named_buffers():
-        if id(buf) not in block_buffer_ids and buf.device.type != "cuda":
-            buf.data = buf.data.to("cuda")
 
 
 def _remove_all_accelerate_hooks(module: torch.nn.Module) -> None:
@@ -303,8 +304,16 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool,
         blocks = _discover_transformer_blocks(pipe.transformer)
 
         if blocks:
-            # --- shell on GPU permanently -----------------------------
-            _move_shell_to_gpu(pipe.transformer, blocks)
+            # --- tag shell params so the transformer hooks can manage them ---
+            _blk_pids = set()
+            _blk_bids = set()
+            for blk in blocks:
+                for p in blk.parameters():
+                    _blk_pids.add(id(p))
+                for b in blk.buffers():
+                    _blk_bids.add(id(b))
+            pipe.transformer._holaf_block_param_ids = _blk_pids
+            pipe.transformer._holaf_block_buffer_ids = _blk_bids
 
             # --- per-block hooks --------------------------------------
             for _i, block in enumerate(blocks):
@@ -312,14 +321,11 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool,
                 block.register_forward_hook(_block_to_cpu)
 
             logger.info(
-                "[Nucleus-Image LRU] Shell on GPU, %d blocks with manual hooks.",
+                "[Nucleus-Image LRU] %d blocks with manual hooks, shell managed per-step.",
                 len(blocks),
             )
 
-            # --- transformer input/output device handling -------------
-            # The pipeline feeds CPU tensors to the transformer; the
-            # pre-hook moves them to CUDA, the post-hook moves results
-            # back to CPU so the scheduler stays happy.
+            # --- transformer input / output + shell management --------
             pipe.transformer.register_forward_pre_hook(
                 _transformer_args_to_cuda, with_kwargs=True
             )
