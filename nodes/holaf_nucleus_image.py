@@ -354,12 +354,13 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool,
         # --- LRU-aware block-level offloading ---
         # Strategy:
         #   1. Move all components to CPU first.
-        #   2. Move the transformer's "shell" (non-block params: embeddings,
-        #      norms, proj_out) to GPU permanently — these are small (~1-2 GB).
-        #   3. Keep transformer blocks on CPU; install forward hooks that
-        #      move each block to GPU on-demand and evict LRU when VRAM > threshold.
-        #   4. Text encoder and VAE are loaded to GPU on-demand for their
-        #      respective phases, then immediately offloaded.
+        #   2. Identify transformer "shell" params (embeddings, norms, proj_out)
+        #      versus block params.  Only move the shell to GPU — the full
+        #      transformer (~34 GB bf16) does NOT fit on a 12 GB card.
+        #   3. Install forward hooks on each block so they are moved to GPU
+        #      on-demand and evicted LRU when VRAM exceeds the threshold.
+        #   4. Text encoder and VAE are sequentially offloaded for their
+        #      respective phases.
         lru_offloader = LayerLRUOffloader(vram_threshold=vram_threshold)
 
         # Move everything to CPU first
@@ -371,18 +372,33 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool,
         blocks = LayerLRUOffloader._discover_blocks(pipe.transformer)
 
         if blocks:
-            # Move entire transformer to GPU (so non-block params are there),
-            # then move only the blocks back to CPU.
-            pipe.transformer.to("cuda")
+            # Collect parameter and buffer ids that belong to blocks.
+            # Everything else is the "shell" (embeddings, norms, proj_out).
+            block_param_ids = set()
+            block_buffer_ids = set()
             for block in blocks:
-                block.to("cpu")
+                for p in block.parameters():
+                    block_param_ids.add(id(p))
+                for b in block.buffers():
+                    block_buffer_ids.add(id(b))
+
+            # Move only shell parameters / buffers to GPU.
+            # This avoids the OOM that would be caused by
+            # ``pipe.transformer.to("cuda")`` on cards < 34 GB.
+            for _name, param in pipe.transformer.named_parameters():
+                if id(param) not in block_param_ids:
+                    param.data = param.data.to("cuda")
+            for _name, buf in pipe.transformer.named_buffers():
+                if id(buf) not in block_buffer_ids:
+                    buf.data = buf.data.to("cuda")
+
             logger.info(
                 "[Nucleus-Image LRU] Transformer shell on GPU, %d blocks on CPU.",
                 len(blocks),
             )
         else:
-            # Fallback: keep entire transformer on CPU, hooks will
-            # move it as a whole before each forward.
+            # Fallback: keep entire transformer on CPU, let hooks move it
+            # as a whole before each forward (equivalent to sequential mode).
             pipe.transformer.to("cpu")
             logger.warning(
                 "[Nucleus-Image LRU] Could not split transformer shell/blocks. "
