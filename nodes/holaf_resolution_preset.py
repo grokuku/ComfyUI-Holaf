@@ -131,6 +131,22 @@ MASTER_RESOLUTIONS = {
         "16:9 Landscape (HD Video-Widescreen)": (2048, 1152),
         "~2.39:1 Landscape (Anamorphic Cinema)": (2304, 960),
     },
+    # Nucleus-Image was trained with 7 specific aspect ratios using
+    # aspect-ratio bucketing. These are the exact resolutions from the
+    # model's official documentation. Only these 7 ratios are supported;
+    # entries for unsupported ratios fall back to the closest valid one.
+    "Nucleus-Image": {
+        "9:16 Portrait (Mobile Video)": (768, 1344),
+        "2:3 Portrait (35mm Photo)": (832, 1248),
+        "3:4 Portrait (Classic Monitor-Photo)": (896, 1184),
+        "4:5 Portrait (Large Format Photo)": (896, 1184),     # closest: 3:4
+        "1:1 Square (Instagram-Medium Format)": (1024, 1024),
+        "5:4 Landscape (Large Format Photo)": (1184, 896),   # closest: 4:3
+        "4:3 Landscape (Classic Monitor-Photo)": (1184, 896),
+        "3:2 Landscape (35mm Photo)": (1248, 832),
+        "16:9 Landscape (HD Video-Widescreen)": (1344, 768),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (1344, 768), # closest: 16:9
+    },
 }
 
 
