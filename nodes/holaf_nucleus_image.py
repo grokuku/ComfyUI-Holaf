@@ -66,8 +66,6 @@ _cached_kv_cache = None
 _cached_vram_threshold = None
 
 
-# Block-discovery logic shared by the helpers below.
-
 def _discover_transformer_blocks(transformer: torch.nn.Module) -> list:
     """
     Discover the list of sequential transformer blocks.
@@ -93,6 +91,55 @@ def _discover_transformer_blocks(transformer: torch.nn.Module) -> list:
     return []
 
 
+# ---------------------------------------------------------------------------
+# Low-level hook helpers (used by lru_offload)
+# ---------------------------------------------------------------------------
+
+def _block_to_cuda(module, args, kwargs):
+    """Pre-forward: move block params to GPU."""
+    module.to("cuda")
+    return args, kwargs
+
+
+def _block_to_cpu(module, input, output):
+    """Post-forward: move block params back to CPU."""
+    module.to("cpu")
+    return output
+
+
+def _transformer_args_to_cuda(module, args, kwargs):
+    """Pre-forward on the *transformer*: move all tensor args to CUDA."""
+    args = tuple(
+        a.to("cuda") if isinstance(a, torch.Tensor) else a for a in args
+    )
+    kwargs = {
+        k: v.to("cuda") if isinstance(v, torch.Tensor) else v
+        for k, v in kwargs.items()
+    }
+    return args, kwargs
+
+
+def _transformer_out_to_cpu(module, input, output):
+    """Post-forward on the *transformer*: move results back to CPU."""
+    if isinstance(output, torch.Tensor):
+        return output.to("cpu")
+    if isinstance(output, (tuple, list)):
+        return type(output)(
+            o.to("cpu") if isinstance(o, torch.Tensor) else o for o in output
+        )
+    return output
+
+
+def _hook_module_cpu_gpu(module: torch.nn.Module) -> None:
+    """
+    Register hooks so *module* is moved to GPU before its forward
+    and back to CPU afterwards.  Used for text_encoder and VAE.
+    """
+    module.register_forward_pre_hook(_block_to_cuda, with_kwargs=True)
+    module.register_forward_hook(_block_to_cpu)
+
+
+
 def _move_shell_to_gpu(transformer: torch.nn.Module, blocks: list) -> None:
     """Move only non-block parameters / buffers to GPU."""
     block_param_ids = set()
@@ -111,39 +158,20 @@ def _move_shell_to_gpu(transformer: torch.nn.Module, blocks: list) -> None:
             buf.data = buf.data.to("cuda")
 
 
-def _materialize_pipeline_to_cpu(pipe) -> None:
+def _remove_all_accelerate_hooks(module: torch.nn.Module) -> None:
     """
-    Materialize every meta tensor in the pipeline to CPU.
-
-    Accelerate's cpu_offload replaces module params with meta tensors
-    and stores the real data in a CpuOffloadedStateDict.  This helper
-    triggers the pre_forward hook for each component to restore the
-    state dict to CPU, then removes the hook so we can manage placement
-    ourselves.
+    Recursively strip *every* accelerate hook (``_hf_hook``) from a module
+    and all its children.  This guarantees that no external hook interferes
+    with our manual ``.to()``-based placement.
     """
-    import accelerate.hooks
-
-    for attr_name in dir(pipe):
-        component = getattr(pipe, attr_name, None)
-        if not isinstance(component, torch.nn.Module):
-            continue
-        if not any(p.device.type == "meta" for p in component.parameters()):
-            continue
-
-        # The component has an accelerate hook with an offloaded state dict.
-        for _name, param in component.named_parameters():
-            if param.device.type != "meta":
-                continue
-            # Retrieve the real tensor from the hook's state dict.
-            hook = getattr(component, "_hf_hook", None)
-            if hook is not None and hasattr(hook, "state_dict"):
-                sd = hook.state_dict
-                if _name in sd:
-                    param.data = sd[_name].to("cpu", copy=False)
-
-        # Remove the accelerate hook so it doesn't interfere.
-        if hasattr(component, "_hf_hook"):
-            accelerate.hooks.remove_hook_from_module(component)
+    try:
+        import accelerate.hooks as _ah
+        if hasattr(module, "_hf_hook"):
+            _ah.remove_hook_from_module(module)
+    except ImportError:
+        pass
+    for child in module.children():
+        _remove_all_accelerate_hooks(child)
 
 
 # ---------------------------------------------------------------------------
@@ -238,65 +266,60 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool,
 
     # --- Apply VRAM offloading strategy ---
     if offload_mode == "lru_offload":
-        # --- Per-block offloading via accelerate's cpu_offload ---
+        # --- Per-block manual offloading -------------------------------
         # Strategy:
-        #   1. Load pipeline, materialize everything to CPU.
-        #   2. Discover transformer blocks and offload each one individually
-        #      with accelerate.cpu_offload.  This handles meta-tensor
-        #      materialization correctly (unlike manual .to("cuda")).
-        #   3. Move the transformer "shell" (embeddings, norms, proj_out)
-        #      to GPU permanently — these are small (~1-2 GB).
-        #   4. Text encoder and VAE are also managed by cpu_offload for
-        #      their respective phases.
-        #
-        # Peak VRAM on a 12 GB card:
-        #   shell (~1-2 GB) + one active block (~4 GB)
-        #   + text_encoder / VAE (~1 GB on demand) ≈ 6-7 GB
+        #   1. Strip *all* accelerate hooks recursively — ``from_pretrained``
+        #      may install ``AlignDevicesHook`` on submodules.
+        #   2. Move everything to CPU (real tensors, no meta).
+        #   3. Keep the transformer "shell" (embeddings, norms, proj_out)
+        #      on GPU permanently (~1-2 GB).
+        #   4. Install bare-metal pre/post forward hooks on each
+        #      transformer block that simply do ``.to("cuda")`` /
+        #      ``.to("cpu")``.  No meta tensors, no accelerate.
+        #   5. Hook text_encoder and VAE the same way.
 
-        # --- materialize on CPU ------------------------------------------
-        # Use accelerate's load_checkpoint_and_dispatch-style materialization.
-        # Calling .to("cpu") may fail on meta tensors (PyTorch >= 2.x).
-        try:
-            pipe.to("cpu")
-        except NotImplementedError:
-            # Some tensors are still on "meta" — materialize via accelerate.
-            _materialize_pipeline_to_cpu(pipe)
+        # --- strip accelerate hooks ------------------------------------
+        _remove_all_accelerate_hooks(pipe)
 
+        # --- materialize on CPU ----------------------------------------
+        pipe.to("cpu")
         gc.collect()
         torch.cuda.empty_cache()
 
-        # --- discover blocks ---------------------------------------------
+        # --- discover blocks -------------------------------------------
         blocks = _discover_transformer_blocks(pipe.transformer)
 
         if blocks:
-            # Offload each block individually with accelerate.
-            # This is safe: cpu_offload saves the state dict to CPU,
-            # replaces params with meta, and hooks pre_forward to load
-            # back to GPU before the block executes.
-            from accelerate import cpu_offload as _accel_cpu_offload
-            for _i, block in enumerate(blocks):
-                _accel_cpu_offload(block, execution_device="cuda")
-
-            # Move shell (non-block) parameters to GPU.
-            # They stay there for the whole denoising loop.
+            # --- shell on GPU permanently -----------------------------
             _move_shell_to_gpu(pipe.transformer, blocks)
 
+            # --- per-block hooks --------------------------------------
+            for _i, block in enumerate(blocks):
+                block.register_forward_pre_hook(_block_to_cuda, with_kwargs=True)
+                block.register_forward_hook(_block_to_cpu)
+
             logger.info(
-                "[Nucleus-Image LRU] Shell on GPU, %d blocks managed by accelerate cpu_offload.",
+                "[Nucleus-Image LRU] Shell on GPU, %d blocks with manual hooks.",
                 len(blocks),
             )
 
-            # --- text encoder & VAE --------------------------------------
-            # Also managed by accelerate cpu_offload (instead of calling
-            # enable_sequential_cpu_offload, which may interfere with the
-            # transformer's per-block hooks).
-            _accel_cpu_offload(pipe.text_encoder, execution_device="cuda")
+            # --- transformer input/output device handling -------------
+            # The pipeline feeds CPU tensors to the transformer; the
+            # pre-hook moves them to CUDA, the post-hook moves results
+            # back to CPU so the scheduler stays happy.
+            pipe.transformer.register_forward_pre_hook(
+                _transformer_args_to_cuda, with_kwargs=True
+            )
+            pipe.transformer.register_forward_hook(_transformer_out_to_cpu)
+
+            # --- text encoder & VAE hooks -----------------------------
+            _hook_module_cpu_gpu(pipe.text_encoder)
             if hasattr(pipe, "text_encoder_2") and pipe.text_encoder_2 is not None:
-                _accel_cpu_offload(pipe.text_encoder_2, execution_device="cuda")
-            _accel_cpu_offload(pipe.vae, execution_device="cuda")
+                _hook_module_cpu_gpu(pipe.text_encoder_2)
+            _hook_module_cpu_gpu(pipe.vae)
 
         else:
-            # Fallback: offload entire transformer as one unit.
+            # Fallback: no blocks discovered — use standard sequential.
             pipe.enable_sequential_cpu_offload()
             logger.warning(
                 "[Nucleus-Image LRU] Could not discover blocks — "
