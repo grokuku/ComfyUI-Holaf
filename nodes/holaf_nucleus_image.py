@@ -163,13 +163,26 @@ def _remove_all_accelerate_hooks(module: torch.nn.Module) -> None:
     Recursively strip *every* accelerate hook (``_hf_hook``) from a module
     and all its children.  This guarantees that no external hook interferes
     with our manual ``.to()``-based placement.
+
+    For a ``DiffusionPipeline`` (which is NOT an ``nn.Module``) we iterate
+    over its components first, then recurse into each one.
     """
     try:
         import accelerate.hooks as _ah
-        if hasattr(module, "_hf_hook"):
-            _ah.remove_hook_from_module(module)
     except ImportError:
-        pass
+        return
+
+    # If this is a pipeline (not an nn.Module), handle its components.
+    if not isinstance(module, torch.nn.Module):
+        for attr_name in dir(module):
+            component = getattr(module, attr_name, None)
+            if isinstance(component, torch.nn.Module):
+                _remove_all_accelerate_hooks(component)
+        return
+
+    # --- nn.Module path ------------------------------------------------
+    if hasattr(module, "_hf_hook"):
+        _ah.remove_hook_from_module(module)
     for child in module.children():
         _remove_all_accelerate_hooks(child)
 
