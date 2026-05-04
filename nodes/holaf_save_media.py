@@ -15,6 +15,9 @@
 
 import os
 import json
+import time
+import shutil
+import tempfile
 import datetime
 import numpy as np
 from PIL import Image
@@ -42,6 +45,7 @@ class HolafSaveMedia:
                 "filename": ("STRING", {"default": "%Y-%m-%d-%Hh%Mm%Ss"}),
                 "save_prompt": ("BOOLEAN", {"default": True}),
                 "save_workflow": ("BOOLEAN", {"default": True}),
+                "temp_dir": ("STRING", {"default": ""}),
                 
                 "--- IMAGE FORMAT ---": (["-----------------"],),
                 "image_format": (["png", "jpg", "jpeg", "webp"], {"default": "png"}),
@@ -50,7 +54,7 @@ class HolafSaveMedia:
                 
                 "--- VIDEO FORMAT ---": (["-----------------"],),
                 "video_container": (["mp4", "webm", "gif"], {"default": "mp4"}),
-                "video_codec": (["auto", "h264", "h265", "vp9", "av1"], {"default": "auto"}),
+                "video_codec": (["auto", "h264", "h265", "vp9", "av1", "h264_nvenc", "hevc_nvenc"], {"default": "auto"}),
                 "video_fps": ("INT", {"default": 24, "min": 1, "max": 120, "step": 1}),
                 "video_quality": ("INT", {"default": 23, "min": 0, "max": 63, "step": 1}),
                 
@@ -153,13 +157,64 @@ class HolafSaveMedia:
         for packet in audio_stream.encode(None):
             container.mux(packet)
 
+    @staticmethod
+    def _detect_temp_dir():
+        """Auto-detect the best temporary directory for encoding.
+        Priority: /dev/shm (RAM disk) > system temp directory."""
+        shm = "/dev/shm"
+        if os.path.isdir(shm) and os.access(shm, os.W_OK):
+            return shm
+        return tempfile.gettempdir()
+
+    @staticmethod
+    def _is_codec_available(codec_name):
+        """Check if a codec is available in PyAV/FFmpeg."""
+        try:
+            av.codec.Codec(codec_name, 'w')
+            return True
+        except ValueError:
+            return False
+
+    def _resolve_video_codec(self, container, codec_opt):
+        """Resolve a user-friendly codec option to an internal FFmpeg codec name.
+        Handles NVENC fallback gracefully."""
+        if container == "gif":
+            return "gif"
+
+        if codec_opt in ("h264_nvenc", "hevc_nvenc"):
+            if container != "mp4":
+                print(f"[Holaf Save Media] NVENC only works with MP4 container, falling back to auto for {container}.")
+                return self._resolve_video_codec(container, "auto")
+            if self._is_codec_available(codec_opt):
+                return codec_opt
+            fallback = "libx264" if codec_opt == "h264_nvenc" else "libx265"
+            print(f"[Holaf Save Media] {codec_opt} not available in PyAV, falling back to {fallback}.")
+            return fallback
+
+        if container == "mp4":
+            if codec_opt in ("auto", "h264"):
+                return "libx264"
+            elif codec_opt == "h265":
+                return "libx265"
+            return "libx264"
+        elif container == "webm":
+            if codec_opt in ("auto", "vp9"):
+                return "libvpx-vp9"
+            elif codec_opt == "av1":
+                return "libaom-av1"
+            return "libvpx-vp9"
+        return "libx264"
+
     def save_media(self, mode, **kwargs):
+        t_total_start = time.time()
+
         # 1. Parse Common Arguments
         base_path = kwargs.get("base_path", folder_paths.get_output_directory())
         subfolder = kwargs.get("subfolder", "%Y-%m-%d")
         filename = kwargs.get("filename", "%Y-%m-%d-%Hh%Mm%Ss")
         save_prompt = kwargs.get("save_prompt", True)
         save_workflow = kwargs.get("save_workflow", True)
+        temp_dir_setting = kwargs.get("temp_dir", "")
         
         prompt = kwargs.get("prompt", "")
         prompt_hidden = kwargs.get("prompt_hidden", None)
@@ -182,21 +237,35 @@ class HolafSaveMedia:
         output_path = os.path.join(base_path, formatted_subfolder)
         os.makedirs(output_path, exist_ok=True)
 
+        # Resolve temp directory for fast encoding
+        if temp_dir_setting and temp_dir_setting.strip():
+            temp_dir = temp_dir_setting.strip()
+            if not (os.path.isdir(temp_dir) and os.access(temp_dir, os.W_OK)):
+                print(f"[Holaf Save Media] temp_dir '{temp_dir}' not writable, auto-detecting.")
+                temp_dir = self._detect_temp_dir()
+        else:
+            temp_dir = self._detect_temp_dir()
+        print(f"[Holaf Save Media] Mode: {mode} | Temp: {temp_dir} | Output: {output_path}")
+
         # 3. ROUTING LOGIC
         if mode == "image":
             if image_tensor is None:
                 print("[Holaf Save Media] Warning: Mode is 'image' but no image provided.")
                 return {"ui": {"text": ["No image provided"]}, "result": (image_tensor, audio_data, "", "", "")}
             
+            t0 = time.time()
             img_format = kwargs.get("image_format", "png")
             ext = f".{img_format}"
             img_array = (image_tensor.cpu().numpy() * 255.0).astype(np.uint8)
+            print(f"[Holaf Save Media] Image: tensor→numpy conversion in {time.time()-t0:.2f}s")
             
             results = []
             workflow_json = ""
             final_path = ""
             
-            for i in range(img_array.shape[0]):
+            total = img_array.shape[0]
+            for i in range(total):
+                t_img = time.time()
                 file_path, final_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
                 base_name = os.path.splitext(final_filename)[0]
                 final_path = file_path
@@ -210,12 +279,15 @@ class HolafSaveMedia:
                         
                     results.append({"filename": final_filename, "subfolder": formatted_subfolder, "type": self.type})
                 except Exception as e:
-                     print(f"[Holaf Save Media] Error saving image: {e}")
+                     print(f"[Holaf Save Media] Error saving image {i}: {e}")
 
-                # Only save metadata once per batch (optimization)
                 if i == 0:
                     workflow_json = self._save_metadata(output_path, base_name, prompt, save_prompt, save_workflow, prompt_hidden, extra_pnginfo)
 
+                if total <= 10 or (i + 1) % 10 == 0:
+                    print(f"[Holaf Save Media] Image {i+1}/{total} saved in {time.time()-t_img:.2f}s")
+
+            print(f"[Holaf Save Media] Image batch ({total} images) ✅ {time.time()-t_total_start:.2f}s total")
             return {"ui": {"images": results}, "result": (image_tensor, audio_data, final_path, prompt, workflow_json)}
 
 
@@ -229,48 +301,64 @@ class HolafSaveMedia:
             v_fps = kwargs.get("video_fps", 24)
             v_quality = kwargs.get("video_quality", 23)
 
-            # Determine Codec
-            if v_container == "mp4":
-                if v_codec_opt == "auto": v_codec = "libx264"
-                elif v_codec_opt == "h265": v_codec = "libx265"
-                else: v_codec = "libx264"
-            elif v_container == "webm":
-                if v_codec_opt == "auto": v_codec = "libvpx-vp9"
-                elif v_codec_opt == "av1": v_codec = "libaom-av1"
-                else: v_codec = "libvpx-vp9"
-            elif v_container == "gif":
-                v_codec = "gif"
-            else:
-                v_codec = "libx264"
+            # Resolve codec (with NVENC support)
+            v_codec = self._resolve_video_codec(v_container, v_codec_opt)
+            is_nvenc = v_codec in ("h264_nvenc", "hevc_nvenc")
+            print(f"[Holaf Save Media] Video codec: {v_codec} | NVENC: {is_nvenc} | {v_fps}fps | quality={v_quality}")
 
-            ext = f".{v_container}"
-            video_path, final_video_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
-            base_name = os.path.splitext(final_video_filename)[0]
+            ext = f".{v_container}"            
 
+            # Convert tensor
+            t0 = time.time()
             img_array = (image_tensor.cpu().numpy() * 255.0).astype(np.uint8)
             batch_size, height, width, channels = img_array.shape
-            
+            print(f"[Holaf Save Media] Video: tensor→numpy in {time.time()-t0:.2f}s | {batch_size} frames, {width}x{height}")
+
             input_pixel_format = 'rgba' if channels == 4 else 'gray' if channels == 1 else 'rgb24'
 
+            # --- CREATE TEMP FILE ---
             try:
-                container = av.open(video_path, mode='w')
+                tmp_fd, temp_video_path = tempfile.mkstemp(suffix=ext, prefix='holaf_video_', dir=temp_dir)
+                os.close(tmp_fd)
+                print(f"[Holaf Save Media] Encoding to temp: {temp_video_path}")
             except Exception as e:
-                print(f"[Holaf Save Media] Codec error ({v_codec}): {e}. Falling back.")
-                v_codec = 'libx264' if v_container == 'mp4' else 'libvpx-vp9'
-                container = av.open(video_path, mode='w')
+                print(f"[Holaf Save Media] Cannot create temp file in {temp_dir}: {e}. Writing directly to output.")
+                video_path, final_video_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
+                temp_video_path = video_path
+            else:
+                video_path, final_video_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
 
-            # --- 1. SETUP VIDEO STREAM ---
+            base_name = os.path.splitext(final_video_filename)[0]
+
+            # --- OPEN CONTAINER ---
+            t0 = time.time()
+            try:
+                container = av.open(temp_video_path, mode='w')
+            except Exception as e:
+                if is_nvenc:
+                    print(f"[Holaf Save Media] NVENC failed: {e}. Falling back to CPU.")
+                    v_codec = "libx264" if v_container == "mp4" else "libvpx-vp9"
+                    is_nvenc = False
+                else:
+                    v_codec = 'libx264' if v_container == 'mp4' else 'libvpx-vp9'
+                container = av.open(temp_video_path, mode='w')
+            print(f"[Holaf Save Media] Container opened ({v_codec}) in {time.time()-t0:.2f}s")
+
+            # --- SETUP STREAMS ---
+            t0 = time.time()
             v_stream = container.add_stream(v_codec, rate=v_fps)
             v_stream.width = width
             v_stream.height = height
             
             if v_codec == 'gif':
-                 v_stream.pix_fmt = 'rgb24'
+                v_stream.pix_fmt = 'rgb24'
             else:
                 v_stream.pix_fmt = 'yuv420p'
-                v_stream.options = {'crf': str(v_quality)}
+                if is_nvenc:
+                    v_stream.options = {'preset': 'p4', 'cq': str(v_quality)}
+                else:
+                    v_stream.options = {'crf': str(v_quality)}
 
-            # --- 2. SETUP AUDIO STREAM (CRITICAL: MUST BE DONE BEFORE MUXING VIDEO) ---
             a_stream = None
             audio_np_truncated = None
             sample_rate = 44100
@@ -282,36 +370,57 @@ class HolafSaveMedia:
                     audio_np_truncated = audio_tensor[0].cpu().numpy().astype(np.float32)
                     
                     if audio_np_truncated.size > 0:
-                        # Truncate audio to match video duration
                         video_duration_sec = batch_size / v_fps
                         max_samples = int(video_duration_sec * sample_rate)
                         if audio_np_truncated.shape[1] > max_samples:
                             audio_np_truncated = audio_np_truncated[:, :max_samples]
 
-                        # Determine Audio Codec for muxing
                         a_codec = 'aac' if v_container == 'mp4' else 'libopus'
                         a_stream = container.add_stream(a_codec, rate=sample_rate)
                         a_bitrate = kwargs.get("audio_bitrate_kbps", 192) * 1000
                         a_stream.bit_rate = a_bitrate
+            print(f"[Holaf Save Media] Streams setup in {time.time()-t0:.2f}s | audio: {a_stream is not None}")
 
-            # --- 3. WRITE VIDEO FRAMES ---
+            # --- WRITE VIDEO FRAMES ---
+            t0 = time.time()
             for i in range(batch_size):
                 frame_data = img_array[i]
                 frame = av.VideoFrame.from_ndarray(frame_data, format=input_pixel_format)
                 for packet in v_stream.encode(frame):
                     container.mux(packet)
-            for packet in v_stream.encode(): # Flush video
+                if (i + 1) % 50 == 0 or i == batch_size - 1:
+                    print(f"[Holaf Save Media] Frame {i+1}/{batch_size}")
+            for packet in v_stream.encode():
                 container.mux(packet)
+            t_encode = time.time() - t0
+            print(f"[Holaf Save Media] Video encode: {t_encode:.2f}s ({batch_size/t_encode:.1f} fps)")
 
-            # --- 4. WRITE AUDIO FRAMES ---
+            # --- WRITE AUDIO ---
             if a_stream is not None and audio_np_truncated is not None:
+                t0 = time.time()
                 self._write_audio_to_stream(container, a_stream, audio_np_truncated, sample_rate)
+                print(f"[Holaf Save Media] Audio encode: {time.time()-t0:.2f}s")
 
+            # --- CLOSE ---
+            t0 = time.time()
             container.close()
+            print(f"[Holaf Save Media] Container close: {time.time()-t0:.2f}s")
+
+            # --- MOVE FROM TEMP TO FINAL ---
+            if temp_video_path != video_path:
+                t0 = time.time()
+                try:
+                    os.rename(temp_video_path, video_path)
+                except OSError:
+                    shutil.move(temp_video_path, video_path)
+                mb = os.path.getsize(video_path) / (1024*1024)
+                print(f"[Holaf Save Media] File transfer: {mb:.1f} MB in {time.time()-t0:.2f}s")
+
             workflow_json = self._save_metadata(output_path, base_name, prompt, save_prompt, save_workflow, prompt_hidden, extra_pnginfo)
             
+            print(f"[Holaf Save Media] Video ✅ {time.time()-t_total_start:.2f}s total")
             results = [{"filename": final_video_filename, "subfolder": formatted_subfolder, "type": self.type}]
-            ui_key = v_container + "s" # e.g., "mp4s", "gifs"
+            ui_key = v_container + "s"
             return {"ui": {ui_key: results}, "result": (image_tensor, audio_data, video_path, prompt, workflow_json)}
 
 
@@ -322,35 +431,67 @@ class HolafSaveMedia:
 
             a_format = kwargs.get("audio_format", "wav")
             ext = f".{a_format}"
-            audio_path, final_audio_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
-            base_name = os.path.splitext(final_audio_filename)[0]
 
             audio_tensor = audio_data.get("waveform")
             sample_rate = audio_data.get("sample_rate", 44100)
 
+            t0 = time.time()
             if audio_tensor is not None and audio_tensor.dim() >= 3:
                 audio_np = audio_tensor[0].cpu().numpy().astype(np.float32)
-                
-                if audio_np.size > 0:
-                    container = av.open(audio_path, mode='w')
-                    
-                    if a_format == "wav":
-                        a_codec = "pcm_s16le"
-                    elif a_format == "mp3":
-                        a_codec = "libmp3lame"
-                    else: # flac
-                        a_codec = "flac"
-                        
-                    a_stream = container.add_stream(a_codec, rate=sample_rate)
-                    
-                    if a_format != "wav":
-                        a_stream.bit_rate = kwargs.get("audio_bitrate_kbps", 192) * 1000
+            else:
+                audio_np = None
+            print(f"[Holaf Save Media] Audio: tensor→numpy in {time.time()-t0:.2f}s")
 
-                    self._write_audio_to_stream(container, a_stream, audio_np, sample_rate)
-                    container.close()
+            if audio_np is not None and audio_np.size > 0:
+                # Create temp file
+                try:
+                    tmp_fd, temp_audio_path = tempfile.mkstemp(suffix=ext, prefix='holaf_audio_', dir=temp_dir)
+                    os.close(tmp_fd)
+                except Exception as e:
+                    print(f"[Holaf Save Media] Cannot create temp file: {e}. Writing directly.")
+                    audio_path, final_audio_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
+                    temp_audio_path = audio_path
+                else:
+                    audio_path, final_audio_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
+
+                base_name = os.path.splitext(final_audio_filename)[0]
+
+                t0 = time.time()
+                container = av.open(temp_audio_path, mode='w')
+                
+                if a_format == "wav":
+                    a_codec = "pcm_s16le"
+                elif a_format == "mp3":
+                    a_codec = "libmp3lame"
+                else:
+                    a_codec = "flac"
+                    
+                a_stream = container.add_stream(a_codec, rate=sample_rate)
+                
+                if a_format != "wav":
+                    a_stream.bit_rate = kwargs.get("audio_bitrate_kbps", 192) * 1000
+
+                self._write_audio_to_stream(container, a_stream, audio_np, sample_rate)
+                container.close()
+                print(f"[Holaf Save Media] Audio encode: {time.time()-t0:.2f}s")
+
+                # Move from temp to final
+                if temp_audio_path != audio_path:
+                    t0 = time.time()
+                    try:
+                        os.rename(temp_audio_path, audio_path)
+                    except OSError:
+                        shutil.move(temp_audio_path, audio_path)
+                    mb = os.path.getsize(audio_path) / (1024*1024)
+                    print(f"[Holaf Save Media] File transfer: {mb:.1f} MB in {time.time()-t0:.2f}s")
+            else:
+                audio_path = ""
+                final_audio_filename = ""
+                base_name = ""
 
             workflow_json = self._save_metadata(output_path, base_name, prompt, save_prompt, save_workflow, prompt_hidden, extra_pnginfo)
             
+            print(f"[Holaf Save Media] Audio ✅ {time.time()-t_total_start:.2f}s total")
             results = [{"filename": final_audio_filename, "subfolder": formatted_subfolder, "type": self.type}]
             return {"ui": {"audios": results}, "result": (image_tensor, audio_data, audio_path, prompt, workflow_json)}
 
