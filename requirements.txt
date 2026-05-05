@@ -17,8 +17,7 @@
 numpy
 Pillow
 spandrel
-requests
-opencv-python
+av
 
 # --- Nucleus-Image node dependencies (optional) ---
 # The NucleusMoEImagePipeline class requires diffusers >= 0.38 (main branch).
