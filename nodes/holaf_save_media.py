@@ -314,11 +314,14 @@ class HolafSaveMedia:
 
             ext = f".{v_container}"            
 
-            # Convert tensor
+            # Convert tensor to numpy (CPU-side to avoid GPU memory pressure)
             t0 = time.time()
-            img_array = (image_tensor.cpu().numpy() * 255.0).astype(np.uint8)
+            img_cpu = image_tensor.cpu()
+            print(f"[Holaf Save Media] {ts()} .cpu() transfer: {time.time()-t0:.2f}s")
+            t0 = time.time()
+            img_array = (img_cpu.numpy() * 255.0).astype(np.uint8)
             batch_size, height, width, channels = img_array.shape
-            print(f"[Holaf Save Media] {ts()} Tensor→numpy: {time.time()-t0:.2f}s | {batch_size} frames, {width}x{height}")
+            print(f"[Holaf Save Media] {ts()} numpy conversion: {time.time()-t0:.2f}s | {batch_size} frames, {width}x{height}")
 
             input_pixel_format = 'rgba' if channels == 4 else 'gray' if channels == 1 else 'rgb24'
 
