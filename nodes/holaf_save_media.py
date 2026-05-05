@@ -319,7 +319,7 @@ class HolafSaveMedia:
             img_cpu = image_tensor.cpu()
             print(f"[Holaf Save Media] {ts()} .cpu() transfer: {time.time()-t0:.2f}s")
             t0 = time.time()
-            img_array = (img_cpu.numpy() * 255.0).astype(np.uint8)
+            img_array = (img_cpu.numpy() * 255).astype(np.uint8)
             batch_size, height, width, channels = img_array.shape
             print(f"[Holaf Save Media] {ts()} numpy conversion: {time.time()-t0:.2f}s | {batch_size} frames, {width}x{height}")
 
