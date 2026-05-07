@@ -17,24 +17,7 @@ import torch
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
-
-def prepare_cond_for_tile(original_cond_list, device):
-    """Shallow copy + tensor clone (faster than deepcopy for large conditionings)."""
-    if not isinstance(original_cond_list, list): return []
-    cond_list_copy = []
-    for item in original_cond_list:
-        if isinstance(item, (list, tuple)) and len(item) >= 1:
-            if torch.is_tensor(item[0]):
-                cloned_tensor = item[0].clone().to(device)
-                cond_dict = item[1].copy() if len(item) > 1 and isinstance(item[1], dict) else {}
-                cond_list_copy.append([cloned_tensor, cond_dict])
-            else:
-                cond_list_copy.append(list(item))
-        elif torch.is_tensor(item):
-            cond_list_copy.append([item.clone().to(device), {}])
-        else:
-            cond_list_copy.append(item)
-    return cond_list_copy
+from .holaf_utils import prepare_cond_for_tile
 
 class HolafKSampler:
     """

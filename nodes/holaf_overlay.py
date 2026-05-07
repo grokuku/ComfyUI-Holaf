@@ -112,7 +112,7 @@ class HolafOverlayNode:
 
             # --- Mask Creation ---
             if mask is not None:
-                mask_tensor_slice = mask[i if mask.shape[0] == batch_size else 0]
+                mask_tensor_slice = mask[i % mask.shape[0]]
                 mask_np_scaled = mask_tensor_slice.cpu().float().mul(255).clamp(0, 255).byte().numpy()
                 base_mask_pil = ImageOps.invert(Image.fromarray(mask_np_scaled, mode='L'))
             elif overlay_image.shape[-1] == 4:

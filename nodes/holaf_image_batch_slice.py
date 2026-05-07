@@ -39,9 +39,10 @@ class HolafImageBatchSlice:
     def slice_batch(self, images, start_index, end_index):
         # images shape is [batch_size, height, width, channels]
         
-        # 1. Clamp start_index to 0
+        # 1. Clamp start_index to valid range
         if start_index < 0:
             start_index = 0
+        start_index = min(start_index, images.shape[0] - 1)
             
         # 2. Logic for end_index (Inclusive)
         # Python slice is exclusive [start:end], so we need end_index + 1.

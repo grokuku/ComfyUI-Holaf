@@ -2,6 +2,7 @@ import os
 import uuid
 import numpy as np
 import torch
+import folder_paths
 
 # Gestion de la dépendance PyAV
 try:
@@ -78,5 +79,3 @@ class HolafVideoPreview:
         }
 
         return {"ui": {"holaf_video": [preview_data]}, "result": (images,)}
-
-import folder_paths

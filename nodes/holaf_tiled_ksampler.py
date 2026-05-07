@@ -15,10 +15,14 @@
 
 import torch
 import math
+import logging
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
 from comfy.model_patcher import ModelPatcher
+from .holaf_utils import prepare_cond_for_tile
+
+logger = logging.getLogger("Holaf.TiledKSampler")
 
 def _build_feather_mask_1d(size, overlap, device):
     """Create a 1D feather mask with cosine interpolation (vectorized)."""
@@ -30,34 +34,6 @@ def _build_feather_mask_1d(size, overlap, device):
         mask[:safe_overlap] = weights
         mask[-safe_overlap:] = torch.flip(weights, [0])
     return mask
-
-
-def _build_feather_mask_1d_single(size, overlap, device):
-    """Create a 1D feather mask for a single tile (no blending at free edges).
-    Only applies gradient on sides that have an adjacent tile."""
-    mask = torch.ones((size,), device=device)
-    safe_overlap = min(overlap, size // 2)
-    # No gradient at all for single tiles — edges have no neighbor to blend with
-    return mask
-
-
-def prepare_cond_for_tile(original_cond_list, device):
-    """Shallow copy + tensor clone (faster than deepcopy for large conditionings)."""
-    if not isinstance(original_cond_list, list): return []
-    cond_list_copy = []
-    for item in original_cond_list:
-        if isinstance(item, (list, tuple)) and len(item) >= 1:
-            if torch.is_tensor(item[0]):
-                cloned_tensor = item[0].clone().to(device)
-                cond_dict = item[1].copy() if len(item) > 1 and isinstance(item[1], dict) else {}
-                cond_list_copy.append([cloned_tensor, cond_dict])
-            else:
-                cond_list_copy.append(list(item))
-        elif torch.is_tensor(item):
-            cond_list_copy.append([item.clone().to(device), {}])
-        else:
-            cond_list_copy.append(item)
-    return cond_list_copy
 
 
 class HolafTiledKSampler:
@@ -113,7 +89,8 @@ class HolafTiledKSampler:
 
     def _tiled_vae_encode(self, vae, image, tile_w_pixel, tile_h_pixel, overlap_pixel, x_slices, y_slices, height_latent, width_latent):
         """Tiled VAE encoding to prevent GPU OOM on large images.
-        Uses latent-space coordinates (same as sampling loop) to avoid pixel→latent rounding errors."""
+        All tiles processed uniformly in the loop — no special first-tile logic.
+        Uses latent-space coordinates to avoid pixel→latent rounding errors."""
         vae_device = comfy.model_management.vae_device()
         B, H, W, C = image.shape
 
@@ -123,58 +100,66 @@ class HolafTiledKSampler:
         step_x_latent = tile_w_latent - overlap_latent
         step_y_latent = tile_h_latent - overlap_latent
 
-        # Encode first tile to get latent channel count
-        first_tile = image[:1, :tile_h_pixel, :tile_w_pixel, :3].to(vae_device)
-        first_encoded = vae.encode(first_tile).cpu()
-        latent_channels = first_encoded.shape[1]
+        # Encode a small sample to determine latent channel count
+        sample_tile = image[:1, :min(tile_h_pixel, H), :min(tile_w_pixel, W), :3].to(vae_device)
+        sample_encoded = vae.encode(sample_tile).cpu()
+        latent_channels = sample_encoded.shape[1]
+        del sample_tile, sample_encoded
 
         # Output buffers on CPU to save VRAM
         output_latent = torch.zeros((B, latent_channels, height_latent, width_latent), device="cpu")
         blend_mask = torch.zeros((B, 1, height_latent, width_latent), device="cpu")
 
-        # Feather mask for latent blending (use actual VAE output size)
-        actual_h = first_encoded.shape[-2]
-        actual_w = first_encoded.shape[-1]
-        f_mask_x = _build_feather_mask_1d(actual_w, overlap_latent, device="cpu")
-        f_mask_y = _build_feather_mask_1d(actual_h, overlap_latent, device="cpu")
-        feather_2d = f_mask_y.unsqueeze(0) * f_mask_x.unsqueeze(1)
-        feather_4d = feather_2d.unsqueeze(0).unsqueeze(0)  # [1, 1, h, w]
-
-        # Store first tile result at latent position (0, 0)
-        output_latent[:, :, 0:actual_h, 0:actual_w] += first_encoded * feather_4d
-        blend_mask[:, :, 0:actual_h, 0:actual_w] += feather_4d
-
         pbar = comfy.utils.ProgressBar(x_slices * y_slices)
-        pbar.update(1)  # First tile already done
+
+        # Precompute feather mask for the expected full tile size
+        f_mask_x_full = _build_feather_mask_1d(tile_w_latent, overlap_latent, device="cpu")
+        f_mask_y_full = _build_feather_mask_1d(tile_h_latent, overlap_latent, device="cpu")
+        feather_2d_full = f_mask_y_full.unsqueeze(0) * f_mask_x_full.unsqueeze(1)
+        feather_4d_full = feather_2d_full.unsqueeze(0).unsqueeze(0)  # [1, 1, th, tw]
 
         for y in range(y_slices):
             for x in range(x_slices):
-                if y == 0 and x == 0:
-                    pbar.update(1)
-                    continue  # Already processed
-
-                # Use LATENT coordinates (same as sampling loop — no rounding errors)
+                # Latent-space coordinates (exact, no rounding)
                 ly_start = y * step_y_latent
                 lx_start = x * step_x_latent
-                if ly_start + tile_h_latent > height_latent: ly_start = height_latent - tile_h_latent
-                if lx_start + tile_w_latent > width_latent: lx_start = width_latent - tile_w_latent
+                if ly_start + tile_h_latent > height_latent: ly_start = max(0, height_latent - tile_h_latent)
+                if lx_start + tile_w_latent > width_latent: lx_start = max(0, width_latent - tile_w_latent)
 
-                # Convert to PIXEL coordinates (exact: latent * 8, no precision loss)
+                # Pixel coordinates (exact: latent * 8)
                 py_start = ly_start * 8
                 px_start = lx_start * 8
+                # Clamp to actual image bounds (edge tiles may be smaller)
+                py_end = min(py_start + tile_h_pixel, H)
+                px_end = min(px_start + tile_w_pixel, W)
 
-                tile_pixels = image[:, py_start:py_start+tile_h_pixel, px_start:px_start+tile_w_pixel, :3].to(vae_device)
+                tile_pixels = image[:, py_start:py_end, px_start:px_end, :3].to(vae_device)
                 encoded_tile = vae.encode(tile_pixels).cpu()
 
-                # Use actual encoded dimensions for safe placement
+                # Actual VAE output dimensions (may differ for edge tiles)
                 eh = encoded_tile.shape[-2]
                 ew = encoded_tile.shape[-1]
 
-                # Truncate feather mask if VAE output differs from expected
-                f4d = feather_4d[:, :, :eh, :ew]
+                # Clamp to output buffer bounds (safety: VAE padding could overshoot)
+                eh = min(eh, height_latent - ly_start)
+                ew = min(ew, width_latent - lx_start)
+                if eh <= 0 or ew <= 0:
+                    logger.warning("tile (%d,%d) has zero size after clamp (eh=%d, ew=%d). Skipping.", y, x, eh, ew)
+                    pbar.update(1)
+                    continue
+                encoded_cropped = encoded_tile[:, :, :eh, :ew]
 
-                output_latent[:, :, ly_start:ly_start+eh, lx_start:lx_start+ew] += encoded_tile * f4d
-                blend_mask[:, :, ly_start:ly_start+eh, lx_start:lx_start+ew] += f4d
+                # Reuse precomputed mask for full-size tiles; rebuild only for edge tiles
+                if eh == tile_h_latent and ew == tile_w_latent:
+                    feather_4d = feather_4d_full
+                else:
+                    f_mask_x = _build_feather_mask_1d(ew, overlap_latent, device="cpu")
+                    f_mask_y = _build_feather_mask_1d(eh, overlap_latent, device="cpu")
+                    feather_2d = f_mask_y.unsqueeze(0) * f_mask_x.unsqueeze(1)
+                    feather_4d = feather_2d.unsqueeze(0).unsqueeze(0)  # [1, 1, eh, ew]
+
+                output_latent[:, :, ly_start:ly_start+eh, lx_start:lx_start+ew] += encoded_cropped * feather_4d
+                blend_mask[:, :, ly_start:ly_start+eh, lx_start:lx_start+ew] += feather_4d
                 pbar.update(1)
 
         blend_mask = torch.clamp(blend_mask, min=1e-6)
@@ -231,8 +216,8 @@ class HolafTiledKSampler:
         # Use single-tile mask when there's no adjacent tile to blend with
         has_neighbor_x = x_slices > 1
         has_neighbor_y = y_slices > 1
-        f_mask_x = _build_feather_mask_1d(tile_w_latent, overlap_latent, device="cpu") if has_neighbor_x else _build_feather_mask_1d_single(tile_w_latent, overlap_latent, device="cpu")
-        f_mask_y = _build_feather_mask_1d(tile_h_latent, overlap_latent, device="cpu") if has_neighbor_y else _build_feather_mask_1d_single(tile_h_latent, overlap_latent, device="cpu")
+        f_mask_x = _build_feather_mask_1d(tile_w_latent, overlap_latent, device="cpu") if has_neighbor_x else torch.ones((tile_w_latent,), device="cpu")
+        f_mask_y = _build_feather_mask_1d(tile_h_latent, overlap_latent, device="cpu") if has_neighbor_y else torch.ones((tile_h_latent,), device="cpu")
         
         # Reshape masks for latent broadcast [B, C, (F), H, W]
         l_view_x = [1] * latent_samples.ndim
@@ -312,8 +297,8 @@ class HolafTiledKSampler:
             # Same edge-aware logic as sampling masks
             has_neighbor_x = x_slices > 1
             has_neighbor_y = y_slices > 1
-            pf_mask_x = _build_feather_mask_1d(tile_w_pixel, overlap_pixel, device="cpu") if has_neighbor_x else _build_feather_mask_1d_single(tile_w_pixel, overlap_pixel, device="cpu")
-            pf_mask_y = _build_feather_mask_1d(tile_h_pixel, overlap_pixel, device="cpu") if has_neighbor_y else _build_feather_mask_1d_single(tile_h_pixel, overlap_pixel, device="cpu")
+            pf_mask_x = _build_feather_mask_1d(tile_w_pixel, overlap_pixel, device="cpu") if has_neighbor_x else torch.ones((tile_w_pixel,), device="cpu")
+            pf_mask_y = _build_feather_mask_1d(tile_h_pixel, overlap_pixel, device="cpu") if has_neighbor_y else torch.ones((tile_h_pixel,), device="cpu")
             
             # Reshape pixel masks: H is at -3, W is at -2 in [B, (F), H, W, C]
             p_view_x = [1] * first_decoded.ndim
@@ -353,13 +338,17 @@ class HolafTiledKSampler:
                     # Build per-tile pixel feather mask
                     tile_pixel_mask = torch.ones((tile_h_pixel, tile_w_pixel), device="cpu")
                     if has_neighbor_x:
-                        if x == x_slices - 1:
+                        if x == 0:
+                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_feather_mask_pixel[..., :, tile_w_pixel - overlap_pixel:].clone()
+                        elif x == x_slices - 1:
                             tile_pixel_mask[:, :overlap_pixel] = base_feather_mask_pixel[..., :, :overlap_pixel].clone()
                         else:
                             tile_pixel_mask[:, :overlap_pixel] = base_feather_mask_pixel[..., :, :overlap_pixel].clone()
                             tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_feather_mask_pixel[..., :, tile_w_pixel - overlap_pixel:].clone()
                     if has_neighbor_y:
-                        if y == y_slices - 1:
+                        if y == 0:
+                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_feather_mask_pixel[..., tile_h_pixel - overlap_pixel:, :].clone()
+                        elif y == y_slices - 1:
                             tile_pixel_mask[:overlap_pixel, :] *= base_feather_mask_pixel[..., :overlap_pixel, :].clone()
                         else:
                             tile_pixel_mask[:overlap_pixel, :] *= base_feather_mask_pixel[..., :overlap_pixel, :].clone()

@@ -255,6 +255,7 @@ class HolafSaveMedia:
         if mode == "image":
             if image_tensor is None:
                 print(f"[Holaf Save Media] {ts()} Warning: Mode is 'image' but no image provided.")
+                image_tensor = torch.zeros((1, 8, 8, 3))
                 return {"ui": {"text": ["No image provided"]}, "result": (image_tensor, audio_data, "", "", "")}
             
             t0 = time.time()
@@ -299,6 +300,7 @@ class HolafSaveMedia:
         elif mode == "video":
             if image_tensor is None:
                 print(f"[Holaf Save Media] {ts()} Warning: Mode is 'video' but no image provided.")
+                image_tensor = torch.zeros((1, 8, 8, 3))
                 return {"ui": {"text": ["No image provided"]}, "result": (image_tensor, audio_data, "", "", "")}
 
             v_container = kwargs.get("video_container", "mp4")

@@ -68,20 +68,18 @@ class HolafLoadImageVideo:
 
     def _load_video_av(self, video_path, filename):
         container = av.open(video_path)
-        stream = container.streams.video[0]
-        
-        frames = []
-        masks = []
-        
-        for frame in container.decode(stream):
-            img_np = frame.to_ndarray(format='rgba').astype(np.float32) / 255.0
-            frames.append(img_np[:, :, :3])
-            masks.append(1.0 - img_np[:, :, 3])
-
-        container.close()
-
-        if not frames:
-            raise ValueError(f"Vidéo lue mais aucune frame récupérée.")
+        try:
+            stream = container.streams.video[0]
+            frames = []
+            masks = []
+            for frame in container.decode(stream):
+                img_np = frame.to_ndarray(format='rgba').astype(np.float32) / 255.0
+                frames.append(img_np[:, :, :3])
+                masks.append(1.0 - img_np[:, :, 3])
+            if not frames:
+                raise ValueError(f"Vidéo lue mais aucune frame récupérée.")
+        finally:
+            container.close()
 
         image_tensor = torch.from_numpy(np.stack(frames))
         mask_tensor = torch.from_numpy(np.stack(masks))

@@ -113,22 +113,19 @@ class HolafInstagramResize:
         """
         Analyzes the image edges to find the average color.
         """
-        width, height = image.size
-
-        # Collect all pixels from the top, bottom, left, and right edges.
-        pixels_top = list(image.getdata())[:width]
-        pixels_bottom = list(image.getdata())[width * (height - 1):]
-        pixels_left = [image.getpixel((0, y)) for y in range(height)]
-        pixels_right = [image.getpixel((width - 1, y)) for y in range(height)]
-        all_edge_pixels = pixels_top + pixels_bottom + pixels_left + pixels_right
+        # Extract edge rows/columns via numpy (no full-image copy)
+        arr = np.array(image)
+        pixels_top = arr[0, :, :]        # shape (W, 3)
+        pixels_bottom = arr[-1, :, :]   # shape (W, 3)
+        pixels_left = arr[:, 0, :]      # shape (H, 3)
+        pixels_right = arr[:, -1, :]     # shape (H, 3)
+        all_edge_pixels = np.concatenate([pixels_top, pixels_bottom, pixels_left, pixels_right], axis=0)
 
         # Calculate the average R, G, B values.
-        r_values = [pixel[0] for pixel in all_edge_pixels]
-        g_values = [pixel[1] for pixel in all_edge_pixels]
-        b_values = [pixel[2] for pixel in all_edge_pixels]
-        average_r = int(sum(r_values) / len(r_values))
-        average_g = int(sum(g_values) / len(g_values))
-        average_b = int(sum(b_values) / len(b_values))
+        avg = all_edge_pixels.mean(axis=0)
+        average_r = int(avg[0])
+        average_g = int(avg[1])
+        average_b = int(avg[2])
 
         # Return the color as an "rgb(r,g,b)" string.
         return f"rgb({average_r}, {average_g}, {average_b})"

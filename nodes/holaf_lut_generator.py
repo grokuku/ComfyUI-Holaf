@@ -167,14 +167,14 @@ class HolafLutGenerator:
             # 3. Reconstruct the 3D LUT array by reading pixel values from the modified HALD image.
             dim = modified_lut_pil.width
             grid_size = int(round(dim / lut_size))
+            modified_np = np.array(modified_lut_pil)
             for b_idx in range(lut_size):
                 for g_idx in range(lut_size):
                     for r_idx in range(lut_size):
                         x = (b_idx % grid_size) * lut_size + r_idx
                         y = (b_idx // grid_size) * lut_size + g_idx
                         if x < dim and y < modified_lut_pil.height:
-                            pixel_value = modified_lut_pil.getpixel((x, y))
-                            final_lut_np[b_idx, g_idx, r_idx] = np.array(pixel_value, dtype=np.float32) / 255.0
+                            final_lut_np[b_idx, g_idx, r_idx] = modified_np[y, x].astype(np.float32) / 255.0
 
             neutral_image_for_output = self.pil_to_tensor(neutral_pil)
         

@@ -1,9 +1,5 @@
-class AnyType(str):
-    """A special type that compares equal to any other type.
-    Used to allow any connection to the inputs.
-    """
-    def __ne__(self, __value: object) -> bool:
-        return False
+from .holaf_utils import AnyType
+
 
 class HolafAutoSelectX2:
     def __init__(self):

@@ -88,7 +88,11 @@ app.registerExtension({
                 };
 
                 // --- Logique d'upload (maintenant liée au bouton HTML) ---
+                // Remove any stale fileInput from a previous hot-reload registration
+                const oldFileInput = document.getElementById('holaf_file_input');
+                if (oldFileInput) oldFileInput.remove();
                 const fileInput = document.createElement("input");
+                fileInput.id = 'holaf_file_input';
                 Object.assign(fileInput, { type: "file", accept: "image/*,video/*,.mkv,.avi,.mov", style: "display:none" });
                 document.body.appendChild(fileInput);
 

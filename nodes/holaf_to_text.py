@@ -1,10 +1,7 @@
 import torch
 import json
 
-# Fixes potential "bool object is not callable" issues in some ComfyUI setups
-class AnyType(str):
-    def __ne__(self, __value: object) -> bool:
-        return False
+from .holaf_utils import AnyType
 
 MAX_JSON_CHARS = 10000
 

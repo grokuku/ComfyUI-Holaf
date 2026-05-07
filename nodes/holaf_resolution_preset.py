@@ -175,7 +175,7 @@ class HolafResolutionPreset:
 
         image_hash = "no_image"
         if use_image_ratio and image is not None and isinstance(image, torch.Tensor):
-            image_hash = hash(image.shape)
+            image_hash = str(image.shape)
 
         return f"{model_type}-{aspect_ratio}-{use_image_ratio}-{image_hash}"
 

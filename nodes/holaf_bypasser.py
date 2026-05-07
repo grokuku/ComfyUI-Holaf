@@ -1,15 +1,6 @@
 import torch
 
-class AnyType(str):
-    """A special type that compares equal to any other type."""
-    def __ne__(self, __value: object) -> bool:
-        return False
-
-    def __eq__(self, __value: object) -> bool:
-        return True
-
-    def __str__(self):
-        return "*"
+from .holaf_utils import AnyType
 
 ANY_TYPE = AnyType("*")
 

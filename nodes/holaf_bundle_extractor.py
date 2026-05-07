@@ -1,11 +1,7 @@
 # nodes/holaf_bundle_extractor.py
 
-class AnyType(str):
-    """A special type that compares equal to any other type.
-    Used here to trick ComfyUI validation into accepting any connection.
-    """
-    def __ne__(self, __value: object) -> bool:
-        return False
+from .holaf_utils import AnyType
+
 
 class HolafBundleExtractor:
     def __init__(self):
