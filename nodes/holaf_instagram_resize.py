@@ -44,8 +44,7 @@ class HolafInstagramResize:
 
     def resize_image(self, image, fill_color, auto_color):
         # Convert the input tensor (Batch, H, W, C) to a single PIL Image.
-        img_array = image.cpu().numpy() * 255.0
-        img_array = np.clip(img_array, 0, 255).astype(np.uint8)
+        img_array = image.cpu().float().mul(255).clamp(0, 255).byte().numpy()
         img = Image.fromarray(img_array[0])
 
         width, height = img.size

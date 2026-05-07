@@ -1,6 +1,5 @@
-import folder_paths
 import os
-import random
+import uuid
 import numpy as np
 import torch
 
@@ -18,7 +17,6 @@ class HolafVideoPreview:
     def __init__(self):
         self.output_dir = folder_paths.get_temp_directory()
         self.type = "temp"
-        # Un identifiant unique pour éviter les collisions de fichiers temporaires
         self.prefix = "holaf_preview_"
 
     @classmethod
@@ -42,41 +40,36 @@ class HolafVideoPreview:
             print("⚠️ Holaf Video Preview: PyAV ('av') not installed. Passing through images without preview.")
             return (images,)
 
-        # 1. Conversion Tensor -> Numpy
-        img_array = (images.cpu().numpy() * 255.0).astype(np.uint8)
+        # PyTorch SIMD conversion (avoids numpy float64 promotion)
+        img_array = images.cpu().float().mul(255).clamp(0, 255).byte().numpy()
         batch_size, height, width, channels = img_array.shape
 
-        # 2. Préparation du fichier temporaire
-        # On génère un nom aléatoire pour ce run
-        filename = f"{self.prefix}{random.randint(100000, 999999)}.mp4"
+        # Unique filename to avoid collisions
+        filename = f"{self.prefix}{uuid.uuid4().hex[:12]}.mp4"
         file_path = os.path.join(self.output_dir, filename)
 
-        # 3. Encodage Vidéo (H264 / MP4 pour compatibilité web maximale)
         try:
             container = av.open(file_path, mode='w')
             stream = container.add_stream('libx264', rate=fps)
             stream.width = width
             stream.height = height
-            stream.pix_fmt = 'yuv420p' # Standard web
-            stream.options = {'crf': str(quality), 'preset': 'fast'} # Fast pour ne pas ralentir le preview
+            stream.pix_fmt = 'yuv420p'
+            stream.options = {'crf': str(quality), 'preset': 'fast'}
 
             for i in range(batch_size):
                 frame = av.VideoFrame.from_ndarray(img_array[i], format='rgb24')
                 for packet in stream.encode(frame):
                     container.mux(packet)
 
-            # Flush
             for packet in stream.encode():
                 container.mux(packet)
-            
+
             container.close()
 
         except Exception as e:
             print(f"⚠️ Holaf Video Preview Error: {e}")
             return (images,)
 
-        # 4. Retour vers l'UI et Pass-through des images
-        # On renvoie une structure spécifique que notre JS va intercepter
         preview_data = {
             "filename": filename,
             "subfolder": "",
@@ -85,3 +78,5 @@ class HolafVideoPreview:
         }
 
         return {"ui": {"holaf_video": [preview_data]}, "result": (images,)}
+
+import folder_paths

@@ -57,7 +57,7 @@ class HolafLutGenerator:
     def tensor_to_pil(self, tensor: torch.Tensor) -> Image.Image:
         if tensor.ndim == 4:
             tensor = tensor[0]
-        image_np = (tensor.cpu().numpy() * 255.0).astype(np.uint8)
+        image_np = tensor.cpu().float().mul(255).clamp(0, 255).byte().numpy()
         return Image.fromarray(image_np, 'RGB' if image_np.shape[2] == 3 else 'RGBA')
 
     def pil_to_tensor(self, image: Image.Image) -> torch.Tensor:
@@ -65,19 +65,30 @@ class HolafLutGenerator:
         return torch.from_numpy(image_np).unsqueeze(0)
 
     def _generate_hald_clut_image(self, size: int) -> Image.Image:
-        """Generates a neutral identity LUT image, also known as a HALD CLUT."""
+        """Generates a neutral identity LUT image (HALD CLUT) using vectorized numpy."""
         dim = int(round(size ** 1.5))
+        step = 255.0 / (size - 1) if size > 1 else 255.0
+        
+        # Create 3D grid using numpy vectorization instead of triple for loop
+        r = np.arange(size, dtype=np.float32) * step
+        g = np.arange(size, dtype=np.float32) * step
+        b = np.arange(size, dtype=np.float32) * step
+        
+        # Reshape for broadcasting: r varies fastest, then g, then b
+        rgb = np.stack(np.meshgrid(r, g, b, indexing='ij'), axis=-1).reshape(-1, 3)
+        
+        # Map to 2D image using the original layout pattern
+        grid_size = size
         hald_clut = np.zeros((dim, dim, 3), dtype=np.uint8)
-        step = 255.0 / (size - 1)
-        for b in range(size):
-            for g in range(size):
-                for r in range(size):
-                    x = (b % int(dim/size)) * size + r
-                    y = (b // int(dim/size)) * size + g
-                    if x < dim and y < dim:
-                        hald_clut[y, x, 0] = int(r * step)
-                        hald_clut[y, x, 1] = int(g * step)
-                        hald_clut[y, x, 2] = int(b * step)
+        for idx in range(min(size * size * size, dim * dim)):
+            b_idx = idx // (size * size)
+            g_idx = (idx % (size * size)) // size
+            r_idx = idx % size
+            x = (b_idx % (dim // size)) * size + r_idx
+            y = (b_idx // (dim // size)) * size + g_idx
+            if x < dim and y < dim:
+                hald_clut[y, x] = rgb[idx]
+        
         return Image.fromarray(hald_clut, 'RGB')
     
     def _match_histograms_numpy(self, source_np: np.ndarray, reference_np: np.ndarray) -> np.ndarray:

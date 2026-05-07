@@ -17,33 +17,23 @@ import torch
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
-import copy
 
 def prepare_cond_for_tile(original_cond_list, device):
-    """
-    Deep copies a conditioning list and moves all its tensors to the specified device.
-    This prevents modifying the original conditioning data and ensures tensors are on the correct
-    device for the sampling process.
-    """
-    if not isinstance(original_cond_list, list):
-        return []
-
-    cond_list_copy = copy.deepcopy(original_cond_list)
-    for i, item in enumerate(cond_list_copy):
-        # Handle the standard conditioning format: [tensor, {dict}]
-        if isinstance(item, (list, tuple)) and len(item) >= 1 and torch.is_tensor(item[0]):
-            if item[0].device != device:
-                cond_list_copy[i][0] = item[0].to(device)
-            # Ensure the dictionary part exists.
-            if len(item) == 1:
-                 cond_list_copy[i].append({})
-        # Handle cases where the list contains just a tensor.
+    """Shallow copy + tensor clone (faster than deepcopy for large conditionings)."""
+    if not isinstance(original_cond_list, list): return []
+    cond_list_copy = []
+    for item in original_cond_list:
+        if isinstance(item, (list, tuple)) and len(item) >= 1:
+            if torch.is_tensor(item[0]):
+                cloned_tensor = item[0].clone().to(device)
+                cond_dict = item[1].copy() if len(item) > 1 and isinstance(item[1], dict) else {}
+                cond_list_copy.append([cloned_tensor, cond_dict])
+            else:
+                cond_list_copy.append(list(item))
         elif torch.is_tensor(item):
-            tensor_on_device = item
-            if item.device != device:
-                 tensor_on_device = item.to(device)
-            cond_list_copy[i] = [tensor_on_device, {}]
-
+            cond_list_copy.append([item.clone().to(device), {}])
+        else:
+            cond_list_copy.append(item)
     return cond_list_copy
 
 class HolafKSampler:
@@ -160,7 +150,7 @@ class HolafKSampler:
         negative_copy = prepare_cond_for_tile(negative, device)
 
         # Clone the model to prevent in-place modifications to the original model patcher.
-        model_copy = model.clone()
+        # model.clone() removed - not needed for sampling
 
         # --- Sampling ---
         pbar = comfy.utils.ProgressBar(steps)
@@ -168,7 +158,7 @@ class HolafKSampler:
             pbar.update(1)
 
         # Execute the core comfy sampler.
-        sampled_output = comfy.sample.sample(model_copy, noise, steps, cfg, sampler_name, scheduler,
+        sampled_output = comfy.sample.sample(model, noise, steps, cfg, sampler_name, scheduler,
                                              positive_copy, negative_copy, latent_samples,
                                              denoise=denoise, disable_noise=False, start_step=None,
                                              last_step=None, force_full_denoise=False, noise_mask=None,
