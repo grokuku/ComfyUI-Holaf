@@ -16,6 +16,7 @@
 import torch
 import math
 import logging
+import hashlib
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
@@ -109,7 +110,9 @@ class HolafTiledKSampler:
         logger.debug("  height_latent=%d width_latent=%d", height_latent, width_latent)
         logger.debug("  x_slices=%d y_slices=%d", x_slices, y_slices)
 
-        # Encode a small sample to determine latent channel count
+        # Encode a small sample to determine the latent channel count.
+        # This is necessary because the channel count (typically 4 for SD/SDXL) is not
+        # exposed as a property on all VAE objects. The cost is minimal (one tiny tile).
         sample_tile = image[:1, :min(tile_h_pixel, H), :min(tile_w_pixel, W), :3].to(vae_device)
         sample_encoded = vae.encode(sample_tile).cpu()
         latent_channels = sample_encoded.shape[1]
@@ -238,7 +241,7 @@ class HolafTiledKSampler:
 
         # --- 3. TILED VAE ENCODE (if image input) ---
         if input_type == "image":
-            print(f"HolafTiledKSampler: Tiled VAE encode ({x_slices * y_slices} tiles)")
+            logger.info("HolafTiledKSampler: Tiled VAE encode (%d tiles)", x_slices * y_slices)
             latent_samples = self._tiled_vae_encode(
                 vae, image, tile_w_pixel, tile_h_pixel, overlap_pixel, x_slices, y_slices,
                 height_latent, width_latent)
@@ -263,19 +266,20 @@ class HolafTiledKSampler:
         f_mask_x = _build_feather_mask_1d(tile_w_latent, overlap_latent, device="cpu") if has_neighbor_x else torch.ones((tile_w_latent,), device="cpu")
         f_mask_y = _build_feather_mask_1d(tile_h_latent, overlap_latent, device="cpu") if has_neighbor_y else torch.ones((tile_h_latent,), device="cpu")
         
-        # Reshape masks for latent broadcast [B, C, (F), H, W]
-        l_view_x = [1] * latent_samples.ndim
-        l_view_x[-1] = tile_w_latent
-        l_view_y = [1] * latent_samples.ndim
-        l_view_y[-2] = tile_h_latent
-        base_feather_mask_latent = f_mask_y.view(l_view_y) * f_mask_x.view(l_view_x)
+        # Reshape 1D feather components for broadcast (used ONLY for base mask multiplication).
+        # For 2D tile masks, use dimension-aware .view() with both H and W dims set instead.
+        base_l_view_x = [1] * latent_samples.ndim
+        base_l_view_x[-1] = tile_w_latent
+        base_l_view_y = [1] * latent_samples.ndim
+        base_l_view_y[-2] = tile_h_latent
+        base_feather_mask_latent = f_mask_y.view(base_l_view_y) * f_mask_x.view(base_l_view_x)
         # Also keep a 2D version for the per-tile mask construction (tile_mask is 2D)
         base_mask_2d = base_feather_mask_latent.squeeze()  # (H, W)
         
         pbar = comfy.utils.ProgressBar(x_slices * y_slices)
         step_x_latent, step_y_latent = tile_w_latent - overlap_latent, tile_h_latent - overlap_latent
         
-        print(f"HolafTiledKSampler: Sampling {x_slices * y_slices} tiles...")
+        logger.info("HolafTiledKSampler: Sampling %d tiles...", x_slices * y_slices)
         for y in range(y_slices):
             for x in range(x_slices):
                 y_start, x_start = y * step_y_latent, x * step_x_latent
@@ -287,27 +291,32 @@ class HolafTiledKSampler:
                 tile_mask = torch.ones((tile_h_latent, tile_w_latent), device="cpu")
                 if has_neighbor_x:
                     if x == 0:
-                        tile_mask[:, tile_w_latent - overlap_latent:] = base_mask_2d[:, tile_w_latent - overlap_latent:].clone()
+                        tile_mask[:, tile_w_latent - overlap_latent:] = base_mask_2d[:, tile_w_latent - overlap_latent:]
                     elif x == x_slices - 1:
-                        tile_mask[:, :overlap_latent] = base_mask_2d[:, :overlap_latent].clone()
+                        tile_mask[:, :overlap_latent] = base_mask_2d[:, :overlap_latent]
                     else:
-                        tile_mask[:, :overlap_latent] = base_mask_2d[:, :overlap_latent].clone()
-                        tile_mask[:, tile_w_latent - overlap_latent:] = base_mask_2d[:, tile_w_latent - overlap_latent:].clone()
+                        tile_mask[:, :overlap_latent] = base_mask_2d[:, :overlap_latent]
+                        tile_mask[:, tile_w_latent - overlap_latent:] = base_mask_2d[:, tile_w_latent - overlap_latent:]
                 if has_neighbor_y:
                     if y == 0:
-                        tile_mask[tile_h_latent - overlap_latent:, :] *= base_mask_2d[tile_h_latent - overlap_latent:, :].clone()
+                        tile_mask[tile_h_latent - overlap_latent:, :] *= base_mask_2d[tile_h_latent - overlap_latent:, :]
                     elif y == y_slices - 1:
-                        tile_mask[:overlap_latent, :] *= base_mask_2d[:overlap_latent, :].clone()
+                        tile_mask[:overlap_latent, :] *= base_mask_2d[:overlap_latent, :]
                     else:
-                        tile_mask[:overlap_latent, :] *= base_mask_2d[:overlap_latent, :].clone()
-                        tile_mask[tile_h_latent - overlap_latent:, :] *= base_mask_2d[tile_h_latent - overlap_latent:, :].clone()
+                        tile_mask[:overlap_latent, :] *= base_mask_2d[:overlap_latent, :]
+                        tile_mask[tile_h_latent - overlap_latent:, :] *= base_mask_2d[tile_h_latent - overlap_latent:, :]
                 
-                tile_feather_mask_latent = tile_mask.view(l_view_y).expand_as(latent_samples[..., y_start:y_end, x_start:x_end])
+                # Dimension-aware view: works for both 4D [B,C,H,W] and 5D [B,F,C,H,W]
+                l_mask_view = [1] * latent_samples.ndim
+                l_mask_view[-2] = tile_h_latent
+                l_mask_view[-1] = tile_w_latent
+                tile_feather_mask_latent = tile_mask.view(l_mask_view).expand_as(latent_samples[..., y_start:y_end, x_start:x_end])
                 
                 tile_latent = latent_samples[..., y_start:y_end, x_start:x_end]
                 tile_noise = noise[..., y_start:y_end, x_start:x_end]
                 
-                tile_seed = seed + y * x_slices + x
+                # Hash-based tile seed for better decorrelation between adjacent tiles
+                tile_seed = int(hashlib.sha256(f"{seed}-{y}-{x}".encode()).hexdigest(), 16) % (2**64)
                 sampled_output = comfy.sample.sample(model, tile_noise, steps, cfg, sampler_name, scheduler, 
                                                     tile_positive, tile_negative, tile_latent, denoise=denoise, 
                                                     disable_noise=False, callback=None, disable_pbar=True, seed=tile_seed)
@@ -315,6 +324,9 @@ class HolafTiledKSampler:
                 
                 output_latent[..., y_start:y_end, x_start:x_end] += sampled_tile.cpu() * tile_feather_mask_latent
                 blend_mask[..., y_start:y_end, x_start:x_end] += tile_feather_mask_latent
+                del sampled_output, sampled_tile, tile_feather_mask_latent
+                if clean_vram:
+                    comfy.model_management.soft_empty_cache()
                 pbar.update(1)
 
         blend_mask = torch.clamp(blend_mask, min=1e-6)
@@ -324,7 +336,7 @@ class HolafTiledKSampler:
         # --- 5. TILED VAE DECODE ---
         if vae_decode:
             if clean_vram: comfy.model_management.soft_empty_cache()
-            print(f"HolafTiledKSampler: Decoding {x_slices * y_slices} tiles via VAE...")
+            logger.info("HolafTiledKSampler: Decoding %d tiles via VAE...", x_slices * y_slices)
             
             vae_device = comfy.model_management.vae_device()
             
@@ -346,12 +358,13 @@ class HolafTiledKSampler:
             pf_mask_x = _build_feather_mask_1d(tile_w_pixel, overlap_pixel, device="cpu") if has_neighbor_x else torch.ones((tile_w_pixel,), device="cpu")
             pf_mask_y = _build_feather_mask_1d(tile_h_pixel, overlap_pixel, device="cpu") if has_neighbor_y else torch.ones((tile_h_pixel,), device="cpu")
             
-            # Reshape pixel masks: H is at -3, W is at -2 in [B, (F), H, W, C]
-            p_view_x = [1] * first_decoded.ndim
-            p_view_x[-2] = tile_w_pixel
-            p_view_y = [1] * first_decoded.ndim
-            p_view_y[-3] = tile_h_pixel
-            base_feather_mask_pixel = pf_mask_y.view(p_view_y) * pf_mask_x.view(p_view_x)
+            # Reshape 1D feather components for broadcast (used ONLY for base mask multiplication).
+            # For 2D tile masks, use dimension-aware .view() with H, W, and C dims set instead.
+            base_p_view_x = [1] * first_decoded.ndim
+            base_p_view_x[-2] = tile_w_pixel
+            base_p_view_y = [1] * first_decoded.ndim
+            base_p_view_y[-3] = tile_h_pixel
+            base_feather_mask_pixel = pf_mask_y.view(base_p_view_y) * pf_mask_x.view(base_p_view_x)
             # Also keep a 2D version for per-tile mask construction (tile_pixel_mask is 2D)
             base_pixel_mask_2d = base_feather_mask_pixel.squeeze()  # (H, W)
             
@@ -359,10 +372,15 @@ class HolafTiledKSampler:
             # First tile is always at (0,0) — only fade right/bottom if neighbors exist
             first_tile_mask = torch.ones((tile_h_pixel, tile_w_pixel), device="cpu")
             if has_neighbor_x:
-                first_tile_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:].clone()
+                first_tile_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:]
             if has_neighbor_y:
-                first_tile_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :].clone()
-            first_tile_mask_expanded = first_tile_mask.view(p_view_y).expand_as(first_decoded.cpu())
+                first_tile_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :]
+            # Dimension-aware view: works for both 4D [B,H,W,C] and 5D [B,F,H,W,C]
+            first_mask_view = [1] * first_decoded.ndim
+            first_mask_view[-3] = tile_h_pixel
+            first_mask_view[-2] = tile_w_pixel
+            first_mask_view[-1] = 1
+            first_tile_mask_expanded = first_tile_mask.view(first_mask_view).expand_as(first_decoded.cpu())
             
             image_out[..., 0:tile_h_pixel, 0:tile_w_pixel, :] += first_decoded.cpu() * first_tile_mask_expanded
             image_blend_mask[..., 0:tile_h_pixel, 0:tile_w_pixel, :] += first_tile_mask_expanded
@@ -373,8 +391,7 @@ class HolafTiledKSampler:
             for y in range(y_slices):
                 for x in range(x_slices):
                     if y == 0 and x == 0:
-                        pbar_vae.update(1)
-                        continue  # Already processed
+                        continue  # Already processed and counted
                     ly_start, lx_start = y * step_y_latent, x * step_x_latent
                     if ly_start + tile_h_latent > height_latent: ly_start = height_latent - tile_h_latent
                     if lx_start + tile_w_latent > width_latent: lx_start = width_latent - tile_w_latent
@@ -387,27 +404,36 @@ class HolafTiledKSampler:
                     tile_pixel_mask = torch.ones((tile_h_pixel, tile_w_pixel), device="cpu")
                     if has_neighbor_x:
                         if x == 0:
-                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:].clone()
+                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:]
                         elif x == x_slices - 1:
-                            tile_pixel_mask[:, :overlap_pixel] = base_pixel_mask_2d[:, :overlap_pixel].clone()
+                            tile_pixel_mask[:, :overlap_pixel] = base_pixel_mask_2d[:, :overlap_pixel]
                         else:
-                            tile_pixel_mask[:, :overlap_pixel] = base_pixel_mask_2d[:, :overlap_pixel].clone()
-                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:].clone()
+                            tile_pixel_mask[:, :overlap_pixel] = base_pixel_mask_2d[:, :overlap_pixel]
+                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:]
                     if has_neighbor_y:
                         if y == 0:
-                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :].clone()
+                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :]
                         elif y == y_slices - 1:
-                            tile_pixel_mask[:overlap_pixel, :] *= base_pixel_mask_2d[:overlap_pixel, :].clone()
+                            tile_pixel_mask[:overlap_pixel, :] *= base_pixel_mask_2d[:overlap_pixel, :]
                         else:
-                            tile_pixel_mask[:overlap_pixel, :] *= base_pixel_mask_2d[:overlap_pixel, :].clone()
-                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :].clone()
-                    tile_mask_expanded = tile_pixel_mask.view(p_view_y).expand_as(torch.zeros(out_shape, device="cpu")[..., py_start:py_end, px_start:px_end, :])
+                            tile_pixel_mask[:overlap_pixel, :] *= base_pixel_mask_2d[:overlap_pixel, :]
+                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :]
                     
                     tile_latent_subset = final_latent_samples[..., ly_start:ly_end, lx_start:lx_end].to(vae_device)
                     decoded_tile = vae.decode(tile_latent_subset).cpu()
                     
+                    # Dimension-aware view: works for both 4D [B,H,W,C] and 5D [B,F,H,W,C]
+                    tile_mask_view = [1] * decoded_tile.ndim
+                    tile_mask_view[-3] = tile_h_pixel
+                    tile_mask_view[-2] = tile_w_pixel
+                    tile_mask_view[-1] = 1
+                    tile_mask_expanded = tile_pixel_mask.view(tile_mask_view).expand_as(decoded_tile)
+                    
                     image_out[..., py_start:py_end, px_start:px_end, :] += decoded_tile * tile_mask_expanded
                     image_blend_mask[..., py_start:py_end, px_start:px_end, :] += tile_mask_expanded
+                    del tile_latent_subset, decoded_tile, tile_mask_expanded
+                    if clean_vram:
+                        comfy.model_management.soft_empty_cache()
                     pbar_vae.update(1)
             
             image_blend_mask = torch.clamp(image_blend_mask, min=1e-6)
@@ -418,7 +444,7 @@ class HolafTiledKSampler:
                 image_out = image_out.squeeze(1)
                 
         else:
-            print("HolafTiledKSampler: VAE Decode skipped (outputting dummy image).")
+            logger.warning("HolafTiledKSampler: VAE Decode skipped (outputting dummy image).")
             image_out = torch.zeros((final_latent_samples.shape[0], 8, 8, 3))
 
         final_latent["samples"] = final_latent["samples"].cpu()
