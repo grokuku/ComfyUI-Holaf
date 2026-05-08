@@ -14,10 +14,13 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import torch
+import logging
 import comfy.samplers
 import comfy.utils
 import comfy.model_management
 from .holaf_utils import prepare_cond_for_tile
+
+logger = logging.getLogger("Holaf.KSampler")
 
 class HolafKSampler:
     """
@@ -64,7 +67,7 @@ class HolafKSampler:
         """
         # --- Bypass Logic ---
         if bypass:
-            print("[HolafKSampler] Bypassing sampling process.")
+            logger.info("Bypassing sampling process.")
             # If bypassed, we must return the original inputs to maintain the workflow chain.
             final_latent = latent_image
             image_out = image

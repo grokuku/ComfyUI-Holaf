@@ -39,6 +39,7 @@ The ``NucleusMoEImagePipeline`` class is only available in diffusers >= 0.38
 import os
 import gc
 import logging
+import threading
 
 import numpy as np
 import torch
@@ -57,10 +58,11 @@ NODE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(NODE_DIR, "nucleus_image_model")
 
 # Module-level pipeline cache — survives across node invocations within the
-# same process so the model is only loaded once.
+# same process so the model is only loaded once. Thread-safe via _cache_lock.
 _cached_pipeline = None
 _cached_offload_mode = None
 _cached_kv_cache = None
+_cache_lock = threading.Lock()
 
 
 
@@ -104,94 +106,91 @@ def _ensure_model(model_dir: str, repo_id: str):
 
 
 def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool):
-    """
-    Load (or return cached) DiffusionPipeline with the chosen offload strategy.
+    """Load (or return cached) DiffusionPipeline with the chosen offload strategy.
 
-    Supported offload modes:
-    - ``sequential_offload`` : Components offloaded to CPU when not in use.
-                               Works on GPUs with limited VRAM.
-    - ``full_gpu``     : Everything on GPU.  Requires enough VRAM for
-                         the full model.
+    Thread-safe: uses a lock to prevent concurrent model loads.
     """
     global _cached_pipeline, _cached_offload_mode, _cached_kv_cache
 
-    # Reuse cached pipeline when settings are identical
-    if _cached_pipeline is not None:
-        if (_cached_offload_mode == offload_mode
-                and _cached_kv_cache == enable_kv_cache):
-            logger.info("[Nucleus-Image] Reusing cached pipeline.")
-            return _cached_pipeline
-        # Settings changed — free the old pipeline
-        logger.info(
-            "[Nucleus-Image] Settings changed. Reloading pipeline.",
-        )
-        del _cached_pipeline
-        _cached_pipeline = None
-        gc.collect()
-        torch.cuda.empty_cache()
+    with _cache_lock:
+        # Reuse cached pipeline when settings are identical
+        if _cached_pipeline is not None:
+            if (_cached_offload_mode == offload_mode
+                    and _cached_kv_cache == enable_kv_cache):
+                logger.info("[Nucleus-Image] Reusing cached pipeline.")
+                return _cached_pipeline
+            # Settings changed — free the old pipeline
+            logger.info(
+                "[Nucleus-Image] Settings changed. Reloading pipeline.",
+            )
+            del _cached_pipeline
+            _cached_pipeline = None
+            gc.collect()
+            torch.cuda.empty_cache()
 
-    # ------------------------------------------------------------------
-    # Import the pipeline class
-    # ------------------------------------------------------------------
-    try:
-        from diffusers import DiffusionPipeline
-    except ImportError:
-        raise ImportError(
-            "The 'diffusers' library is required but not installed.\n"
-            "The NucleusMoEImagePipeline is only available in diffusers >= 0.38.\n"
-            "Install the latest version with:\n"
-            "  pip install git+https://github.com/huggingface/diffusers"
-        )
-
-    # --- Load pipeline weights ---
-    logger.info("[Nucleus-Image] Loading pipeline from %s (bfloat16) ...", model_dir)
-    pipe = DiffusionPipeline.from_pretrained(
-        model_dir,
-        torch_dtype=torch.bfloat16,
-    )
-
-    # --- Apply VRAM offloading strategy ---
-    if offload_mode == "sequential_offload":
-        pipe.enable_sequential_cpu_offload()
-        logger.info("[Nucleus-Image] VRAM mode: sequential offload.")
-
-    else:  # full_gpu
-        # Everything on GPU.  Requires ~52 GB VRAM.
-        pipe.to("cuda")
-        logger.info("[Nucleus-Image] VRAM mode: full GPU (requires ~52 GB VRAM).")
-
-    # --- Text KV caching ---
-    if enable_kv_cache:
+        # ------------------------------------------------------------------
+        # Import the pipeline class
+        # ------------------------------------------------------------------
         try:
-            from diffusers import TextKVCacheConfig
-            pipe.transformer.enable_cache(TextKVCacheConfig())
-            logger.info("[Nucleus-Image] Text KV cache enabled.")
-        except (ImportError, AttributeError):
-            logger.warning(
-                "[Nucleus-Image] TextKVCacheConfig not available in your "
-                "diffusers version. Skipping KV cache. Update diffusers for "
-                "better performance."
+            from diffusers import DiffusionPipeline
+        except ImportError:
+            raise ImportError(
+                "The 'diffusers' library is required but not installed.\n"
+                "The NucleusMoEImagePipeline is only available in diffusers >= 0.38.\n"
+                "Install the latest version with:\n"
+                "  pip install git+https://github.com/huggingface/diffusers"
             )
 
-    # Cache for future calls
-    _cached_pipeline = pipe
-    _cached_offload_mode = offload_mode
-    _cached_kv_cache = enable_kv_cache
+        # --- Load pipeline weights ---
+        logger.info("[Nucleus-Image] Loading pipeline from %s (bfloat16) ...", model_dir)
+        pipe = DiffusionPipeline.from_pretrained(
+            model_dir,
+            torch_dtype=torch.bfloat16,
+        )
 
-    return pipe
+        # --- Apply VRAM offloading strategy ---
+        if offload_mode == "sequential_offload":
+            pipe.enable_sequential_cpu_offload()
+            logger.info("[Nucleus-Image] VRAM mode: sequential offload.")
+
+        else:  # full_gpu
+            # Everything on GPU.  Requires ~52 GB VRAM.
+            pipe.to("cuda")
+            logger.info("[Nucleus-Image] VRAM mode: full GPU (requires ~52 GB VRAM).")
+
+        # --- Text KV caching ---
+        if enable_kv_cache:
+            try:
+                from diffusers import TextKVCacheConfig
+                pipe.transformer.enable_cache(TextKVCacheConfig())
+                logger.info("[Nucleus-Image] Text KV cache enabled.")
+            except (ImportError, AttributeError):
+                logger.warning(
+                    "[Nucleus-Image] TextKVCacheConfig not available in your "
+                    "diffusers version. Skipping KV cache. Update diffusers for "
+                    "better performance."
+                )
+
+        # Cache for future calls
+        _cached_pipeline = pipe
+        _cached_offload_mode = offload_mode
+        _cached_kv_cache = enable_kv_cache
+
+        return pipe
 
 
 def _unload_pipeline():
     """Fully unload the cached pipeline and free GPU memory."""
     global _cached_pipeline, _cached_offload_mode, _cached_kv_cache
-    if _cached_pipeline is not None:
-        del _cached_pipeline
-        _cached_pipeline = None
-        _cached_offload_mode = None
-        _cached_kv_cache = None
-        gc.collect()
-        torch.cuda.empty_cache()
-        logger.info("[Nucleus-Image] Pipeline unloaded and GPU cache cleared.")
+    with _cache_lock:
+        if _cached_pipeline is not None:
+            del _cached_pipeline
+            _cached_pipeline = None
+            _cached_offload_mode = None
+            _cached_kv_cache = None
+            gc.collect()
+            torch.cuda.empty_cache()
+            logger.info("[Nucleus-Image] Pipeline unloaded and GPU cache cleared.")
 
 
 # ---------------------------------------------------------------------------

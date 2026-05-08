@@ -84,8 +84,3 @@ class HolafImageComparer(PreviewImage):
     # 'result' key holds the data for the node's output connectors.
     # Note: If image_b is None, the second output will be None.
     return { "ui": ui_data, "result": (image_a, image_b) }
-
-# This mapping is used by __init__.py to register the node with ComfyUI.
-NODE_CLASS_MAPPINGS = {
-  'HolafImageComparer': HolafImageComparer,
-}

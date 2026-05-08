@@ -100,10 +100,20 @@ class HolafTiledKSampler:
         step_x_latent = tile_w_latent - overlap_latent
         step_y_latent = tile_h_latent - overlap_latent
 
+        # === DEBUG: log all tile params ===
+        logger.debug("=== _tiled_vae_encode params ===")
+        logger.debug("  image shape: B=%d H=%d W=%d C=%d", B, H, W, C)
+        logger.debug("  tile_w_pixel=%d tile_h_pixel=%d overlap_pixel=%d", tile_w_pixel, tile_h_pixel, overlap_pixel)
+        logger.debug("  tile_w_latent=%d tile_h_latent=%d overlap_latent=%d", tile_w_latent, tile_h_latent, overlap_latent)
+        logger.debug("  step_x_latent=%d step_y_latent=%d", step_x_latent, step_y_latent)
+        logger.debug("  height_latent=%d width_latent=%d", height_latent, width_latent)
+        logger.debug("  x_slices=%d y_slices=%d", x_slices, y_slices)
+
         # Encode a small sample to determine latent channel count
         sample_tile = image[:1, :min(tile_h_pixel, H), :min(tile_w_pixel, W), :3].to(vae_device)
         sample_encoded = vae.encode(sample_tile).cpu()
         latent_channels = sample_encoded.shape[1]
+        logger.debug("  sample VAE output shape: %s", list(sample_encoded.shape))
         del sample_tile, sample_encoded
 
         # Output buffers on CPU to save VRAM
@@ -113,10 +123,15 @@ class HolafTiledKSampler:
         pbar = comfy.utils.ProgressBar(x_slices * y_slices)
 
         # Precompute feather mask for the expected full tile size
-        f_mask_x_full = _build_feather_mask_1d(tile_w_latent, overlap_latent, device="cpu")
-        f_mask_y_full = _build_feather_mask_1d(tile_h_latent, overlap_latent, device="cpu")
-        feather_2d_full = f_mask_y_full.unsqueeze(0) * f_mask_x_full.unsqueeze(1)
-        feather_4d_full = feather_2d_full.unsqueeze(0).unsqueeze(0)  # [1, 1, th, tw]
+        # When overlap is zero, all tiles are blended with weight 1.0 (no feathering)
+        if overlap_latent <= 0:
+            feather_4d_full = None  # Will use torch.ones per-tile instead
+        else:
+            f_mask_x_full = _build_feather_mask_1d(tile_w_latent, overlap_latent, device="cpu")
+            f_mask_y_full = _build_feather_mask_1d(tile_h_latent, overlap_latent, device="cpu")
+            feather_2d_full = f_mask_y_full.unsqueeze(0) * f_mask_x_full.unsqueeze(1)
+            feather_4d_full = feather_2d_full.unsqueeze(0).unsqueeze(0)  # [1, 1, th, tw]
+            logger.debug("  feather_4d_full shape: %s", list(feather_4d_full.shape))
 
         for y in range(y_slices):
             for x in range(x_slices):
@@ -140,23 +155,52 @@ class HolafTiledKSampler:
                 eh = encoded_tile.shape[-2]
                 ew = encoded_tile.shape[-1]
 
+                # === DEBUG: log every tile ===
+                logger.info(
+                    "  tile[%d,%d] ly=%d lx=%d py=%d:%d px=%d:%d | VAE out: %s | eh=%d ew=%d",
+                    y, x, ly_start, lx_start, py_start, py_end, px_start, px_end,
+                    list(encoded_tile.shape), eh, ew
+                )
+
                 # Clamp to output buffer bounds (safety: VAE padding could overshoot)
-                eh = min(eh, height_latent - ly_start)
-                ew = min(ew, width_latent - lx_start)
+                eh_clamped = min(eh, height_latent - ly_start)
+                ew_clamped = min(ew, width_latent - lx_start)
+                if eh_clamped != eh or ew_clamped != ew:
+                    logger.warning(
+                        "  tile[%d,%d] clamped VAE output: (%d,%d) -> (%d,%d)",
+                        y, x, eh, ew, eh_clamped, ew_clamped
+                    )
+                eh, ew = eh_clamped, ew_clamped
+
                 if eh <= 0 or ew <= 0:
                     logger.warning("tile (%d,%d) has zero size after clamp (eh=%d, ew=%d). Skipping.", y, x, eh, ew)
                     pbar.update(1)
                     continue
                 encoded_cropped = encoded_tile[:, :, :eh, :ew]
 
-                # Reuse precomputed mask for full-size tiles; rebuild only for edge tiles
-                if eh == tile_h_latent and ew == tile_w_latent:
+                # Reuse precomputed mask for full-size tiles; use ones when no overlap; rebuild only for edge tiles
+                if overlap_latent <= 0:
+                    feather_4d = torch.ones((1, 1, eh, ew), device="cpu")
+                elif eh == tile_h_latent and ew == tile_w_latent:
                     feather_4d = feather_4d_full
                 else:
+                    logger.debug("  tile[%d,%d] rebuilding feather mask for size (%d,%d)", y, x, eh, ew)
                     f_mask_x = _build_feather_mask_1d(ew, overlap_latent, device="cpu")
                     f_mask_y = _build_feather_mask_1d(eh, overlap_latent, device="cpu")
                     feather_2d = f_mask_y.unsqueeze(0) * f_mask_x.unsqueeze(1)
                     feather_4d = feather_2d.unsqueeze(0).unsqueeze(0)  # [1, 1, eh, ew]
+
+                # Safety: ensure shapes match before multiply
+                if encoded_cropped.shape[-2:] != feather_4d.shape[-2:]:
+                    logger.error(
+                        "  SHAPE MISMATCH tile[%d,%d]: encoded_cropped=%s feather_4d=%s — cropping both to minimum",
+                        y, x, list(encoded_cropped.shape), list(feather_4d.shape)
+                    )
+                    min_h = min(encoded_cropped.shape[-2], feather_4d.shape[-2])
+                    min_w = min(encoded_cropped.shape[-1], feather_4d.shape[-1])
+                    encoded_cropped = encoded_cropped[:, :, :min_h, :min_w]
+                    feather_4d = feather_4d[:, :, :min_h, :min_w]
+                    eh, ew = min_h, min_w
 
                 output_latent[:, :, ly_start:ly_start+eh, lx_start:lx_start+ew] += encoded_cropped * feather_4d
                 blend_mask[:, :, ly_start:ly_start+eh, lx_start:lx_start+ew] += feather_4d

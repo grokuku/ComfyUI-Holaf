@@ -68,7 +68,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafTiledKSampler": HolafTiledKSampler,
 
     "HolafKSampler": HolafKSampler,
-    'HolafImageComparer': HolafImageComparer,
+    "HolafImageComparer": HolafImageComparer,
     "UpscaleImageHolaf": UpscaleImageHolaf,
     "HolafOverlayNode": HolafOverlayNode,
     "HolafResolutionPreset": HolafResolutionPreset,
@@ -98,7 +98,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafTiledKSampler": "Tiled KSampler (Holaf)",
 
     "HolafKSampler": "KSampler (Holaf)",
-    'HolafImageComparer': "Image Comparer (Holaf)",
+    "HolafImageComparer": "Image Comparer (Holaf)",
     "UpscaleImageHolaf": "Upscale (Holaf)",
     "HolafOverlayNode": "Overlay (Holaf)",
     "HolafResolutionPreset": "Resolution Preset (Holaf)",
