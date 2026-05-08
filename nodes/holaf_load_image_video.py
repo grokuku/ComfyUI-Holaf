@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-from PIL import Image, ImageOps, ImageSequence
+from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 import folder_paths
 import av 
 
@@ -18,6 +18,9 @@ class HolafLoadImageVideo:
         return {
             "required": {
                 "media_file": (files,), 
+            },
+            "optional": {
+                "max_frames": ("INT", {"default": 0, "min": 0, "max": 10000, "step": 1}),
             }
         }
 
@@ -26,28 +29,30 @@ class HolafLoadImageVideo:
     FUNCTION = "load_media"
     OUTPUT_NODE = False
 
-    def load_media(self, media_file):
+    def load_media(self, media_file, max_frames=0):
         image_path = folder_paths.get_annotated_filepath(media_file)
         
         if not os.path.exists(image_path):
-            raise FileNotFoundError(f"Fichier introuvable : {image_path}")
+            raise FileNotFoundError(f"File not found: {image_path}")
 
         try:
-            return self._load_image_pil(image_path, media_file)
-        except Exception:
+            return self._load_image_pil(image_path, media_file, max_frames)
+        except (UnidentifiedImageError, OSError) as e_pil:
             try:
-                return self._load_video_av(image_path, media_file)
+                return self._load_video_av(image_path, media_file, max_frames)
             except Exception as e_av:
-                raise ValueError(f"Impossible de charger '{media_file}'. Le format n'est supporté ni par PIL, ni par PyAV.\nErreur: {e_av}")
+                raise ValueError(f"Cannot load '{media_file}'. PIL error: {e_pil}; PyAV error: {e_av}")
 
-    def _load_image_pil(self, image_path, filename):
+    def _load_image_pil(self, image_path, filename, max_frames=0):
         i = Image.open(image_path)
         i = ImageOps.exif_transpose(i)
         
         if getattr(i, 'is_animated', False):
             frames = []
             masks = []
-            for frame in ImageSequence.Iterator(i):
+            for idx, frame in enumerate(ImageSequence.Iterator(i)):
+                if max_frames > 0 and idx >= max_frames:
+                    break
                 frame = frame.convert("RGBA")
                 frame_np = np.array(frame).astype(np.float32) / 255.0
                 frames.append(frame_np[:, :, :3]) 
@@ -61,30 +66,30 @@ class HolafLoadImageVideo:
             image_tensor = torch.from_numpy(image_np[:, :, :3])[None,]
             mask_tensor = torch.from_numpy(1.0 - image_np[:, :, 3])[None,]
 
-        # Modification : On ne retourne QUE le résultat pour éviter le double preview natif
         return {
             "result": (image_tensor, mask_tensor)
         }
 
-    def _load_video_av(self, video_path, filename):
+    def _load_video_av(self, video_path, filename, max_frames=0):
         container = av.open(video_path)
         try:
             stream = container.streams.video[0]
             frames = []
             masks = []
-            for frame in container.decode(stream):
+            for idx, frame in enumerate(container.decode(stream)):
+                if max_frames > 0 and idx >= max_frames:
+                    break
                 img_np = frame.to_ndarray(format='rgba').astype(np.float32) / 255.0
                 frames.append(img_np[:, :, :3])
                 masks.append(1.0 - img_np[:, :, 3])
             if not frames:
-                raise ValueError(f"Vidéo lue mais aucune frame récupérée.")
+                raise ValueError("Video read but no frames retrieved.")
         finally:
             container.close()
 
         image_tensor = torch.from_numpy(np.stack(frames))
         mask_tensor = torch.from_numpy(np.stack(masks))
         
-        # Modification : On ne retourne QUE le résultat pour éviter le double preview natif
         return {
             "result": (image_tensor, mask_tensor)
         }

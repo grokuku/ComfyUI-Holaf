@@ -43,71 +43,65 @@ class HolafInstagramResize:
     CATEGORY = "Holaf"
 
     def resize_image(self, image, fill_color, auto_color):
-        # Convert the input tensor (Batch, H, W, C) to a single PIL Image.
+        # Convert the input tensor (Batch, H, W, C) to PIL Images and process all frames.
         img_array = image.cpu().float().mul(255).clamp(0, 255).byte().numpy()
-        img = Image.fromarray(img_array[0])
+        results = []
+        for b in range(image.shape[0]):
+            img = Image.fromarray(img_array[b])
 
-        width, height = img.size
-        aspect_ratio = width / height
+            width, height = img.size
+            aspect_ratio = width / height
 
-        # Define the target Instagram-compatible ratios.
-        ratios = {
-            "1:1": 1.0,
-            "4:5": 0.8,
-            "16:9": 1.7777777777777777,
-        }
+            # Define the target Instagram-compatible ratios.
+            ratios = {
+                "1:1": 1.0,
+                "4:5": 0.8,
+                "16:9": 1.7777777777777777,
+            }
 
-        # Find the closest target ratio to the image's current ratio.
-        closest_ratio_name = min(ratios, key=lambda k: abs(ratios[k] - aspect_ratio))
-        closest_ratio = ratios[closest_ratio_name]
+            # Find the closest target ratio to the image's current ratio.
+            closest_ratio_name = min(ratios, key=lambda k: abs(ratios[k] - aspect_ratio))
+            closest_ratio = ratios[closest_ratio_name]
 
-        # Calculate the final canvas dimensions.
-        if aspect_ratio > closest_ratio:
-            # Image is wider than the target: needs letterboxing (bars top/bottom).
-            # The canvas width is the original image width.
-            # The canvas height is calculated based on the target ratio.
-            final_width = width
-            final_height = int(round(width / closest_ratio))
-        elif aspect_ratio < closest_ratio:
-            # Image is taller than the target: needs pillarboxing (bars left/right).
-            # The canvas height is the original image height.
-            # The canvas width is calculated based on the target ratio.
-            final_width = int(round(height * closest_ratio))
-            final_height = height
-        else:
-             # Image already matches the target ratio.
-             final_width = width
-             final_height = height
+            # Calculate the final canvas dimensions.
+            if aspect_ratio > closest_ratio:
+                final_width = width
+                final_height = int(round(width / closest_ratio))
+            elif aspect_ratio < closest_ratio:
+                final_width = int(round(height * closest_ratio))
+                final_height = height
+            else:
+                 final_width = width
+                 final_height = height
 
-        # Determine the fill color.
-        if auto_color:
-            fill_color = self.get_dominant_edge_color(img)
-            if fill_color is None:
-                fill_color = "black"
+            # Determine the fill color.
+            if auto_color:
+                fill_color = self.get_dominant_edge_color(img)
+                if fill_color is None:
+                    fill_color = "black"
 
-        # Parse the color string and fall back to black if the color name is invalid.
-        try:
-            fill_color_rgb = ImageColor.getcolor(fill_color, "RGB")
-        except ValueError:
-            print(f"[Holaf Instagram Resize] Invalid color name: {fill_color}. Using black instead.")
-            fill_color_rgb = (0, 0, 0)
+            # Parse the color string and fall back to black if the color name is invalid.
+            try:
+                fill_color_rgb = ImageColor.getcolor(fill_color, "RGB")
+            except ValueError:
+                fill_color_rgb = (0, 0, 0)
 
-        # Create a new blank canvas with the final dimensions and fill color.
-        resized_img = Image.new("RGB", (final_width, final_height), fill_color_rgb)
+            # Create a new blank canvas with the final dimensions and fill color.
+            resized_img = Image.new("RGB", (final_width, final_height), fill_color_rgb)
 
-        # Calculate offsets to center the original image on the new canvas.
-        x_offset = (final_width - width) // 2
-        y_offset = (final_height - height) // 2
+            # Calculate offsets to center the original image on the new canvas.
+            x_offset = (final_width - width) // 2
+            y_offset = (final_height - height) // 2
 
-        # Paste the original image onto the canvas.
-        resized_img.paste(img, (x_offset, y_offset))
+            # Paste the original image onto the canvas.
+            resized_img.paste(img, (x_offset, y_offset))
 
-        # Convert the final PIL Image back to a torch tensor for ComfyUI.
-        resized_img_array = np.array(resized_img).astype(np.float32) / 255.0
-        resized_img_array = np.expand_dims(resized_img_array, axis=0)
-        resized_img_tensor = torch.from_numpy(resized_img_array).float()
+            # Convert the final PIL Image back to a torch tensor for ComfyUI.
+            resized_img_array = np.array(resized_img).astype(np.float32) / 255.0
+            results.append(resized_img_array)
 
-        return (resized_img_tensor,)
+        final_tensor = torch.from_numpy(np.stack(results)).float()
+        return (final_tensor,)
 
     def get_dominant_edge_color(self, image):
         """

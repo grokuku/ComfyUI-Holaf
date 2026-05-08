@@ -19,7 +19,12 @@ import torch
 
 
 def prepare_cond_for_tile(original_cond_list, device):
-    """Shallow copy + tensor clone (faster than deepcopy for large conditionings)."""
+    """Shallow copy + tensor clone (faster than deepcopy for large conditionings).
+
+    Note: This uses a shallow dict copy. If any values in the conditioning dict
+    are mutable nested objects, they will be shared between copies. This is
+    acceptable for ComfyUI conditioning dicts which are not mutated in place.
+    """
     if not isinstance(original_cond_list, list):
         return []
     cond_list_copy = []
@@ -43,6 +48,10 @@ class AnyType(str):
 
     Allows a node to accept any input type by overriding type checking.
     The str base class lets us pass type comparisons that expect a string.
+
+    WARNING: __eq__ always returns True and __ne__ always returns False.
+    Do NOT use this class in general comparison logic — it is designed
+    exclusively for ComfyUI type coercion.
     """
 
     def __ne__(self, __value: object) -> bool:

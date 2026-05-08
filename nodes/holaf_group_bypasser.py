@@ -8,11 +8,11 @@ class HolafGroupBypasser:
     def INPUT_TYPES(s):
         return {
             "required": {
-                # MODIFICATION CRITIQUE :
-                # On passe de (["None"],) à ("STRING", ...)
-                # Cela transforme l'entrée en "Texte libre" pour le validateur Python,
-                # ce qui accepte n'importe quel nom de groupe ("Step 1", "Step 2", etc.).
-                # Le JavaScript se chargera de l'afficher comme une Dropdown.
+                # CRITICAL CHANGE:
+                # Switched from (["None"],) to ("STRING", ...)
+                # This makes the input a free-text field for the Python validator,
+                # accepting any group name ("Step 1", "Step 2", etc.).
+                # The JavaScript will render it as a dropdown.
                 "comfy_group": ("STRING", {"default": "None"}), 
                 "group_name": ("STRING", {"default": "Group A"}),
                 "active": ("BOOLEAN", {"default": True, "label_on": "ON", "label_off": "OFF"}),
@@ -29,15 +29,14 @@ class HolafGroupBypasser:
     FUNCTION = "process"
     CATEGORY = "Holaf"
 
-    # On garde VALIDATE_INPUTS par sécurité
+    # Keep VALIDATE_INPUTS for safety
     @classmethod
     def VALIDATE_INPUTS(s, **kwargs):
         return True
 
     def check_lazy_status(self, comfy_group, group_name, active, bypass_mode, original=None, alternative=None, **kwargs):
-        """
-        Gère l'évaluation paresseuse pour éviter les erreurs "Missing Input" 
-        quand le groupe source est coupé.
+        """Manages lazy evaluation to prevent 'Missing Input' errors
+        when the source group is bypassed.
         """
         if active:
             return ["original"]

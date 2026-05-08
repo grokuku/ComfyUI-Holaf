@@ -20,8 +20,12 @@ app.registerExtension({
                     .replace(/>/g, "&gt;");
 
                 // 2. Code blocks (fenced) — must be before inline code
+                // NOTE: lang is already HTML-escaped above, but we use textContent via
+                // a temporary element for defense-in-depth rather than string interpolation.
                 html = html.replace(/```(\w*)\n([\s\S]*?)```/gim, (match, lang, code) => {
-                    const langLabel = lang ? `<span style="color:#666; font-size:10px;">${lang}</span><br>` : "";
+                    const tempSpan = document.createElement("span");
+                    tempSpan.textContent = lang;
+                    const langLabel = lang ? `<span style="color:#666; font-size:10px;">${tempSpan.innerHTML}</span><br>` : "";
                     return `<div style="background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:8px; margin:4px 0; overflow-x:auto;">${langLabel}<code style="color:#c9d1d9; font-family:monospace; font-size:11px; white-space:pre;">${code.trim()}</code></div>`;
                 });
 
@@ -95,7 +99,14 @@ app.registerExtension({
                     el.style.fontFamily = "Segoe UI, Tahoma, sans-serif";
                     el.style.whiteSpace = "normal"; 
                 } else if (mode === "JSON") {
-                    el.innerHTML = `<pre style="margin:0; color:#8ec07c; font-family:monospace; font-size:11px;">${text}</pre>`;
+                    el.innerHTML = "";
+                    const pre = document.createElement("pre");
+                    pre.style.margin = "0";
+                    pre.style.color = "#8ec07c";
+                    pre.style.fontFamily = "monospace";
+                    pre.style.fontSize = "11px";
+                    pre.textContent = text;
+                    el.appendChild(pre);
                     el.style.whiteSpace = "pre";
                 } else {
                     el.textContent = text;

@@ -41,6 +41,14 @@ class HolafVideoPreview:
             print("⚠️ Holaf Video Preview: PyAV ('av') not installed. Passing through images without preview.")
             return (images,)
 
+        # Clean up old preview files to prevent temp directory bloat
+        for f in os.listdir(self.output_dir):
+            if f.startswith(self.prefix):
+                try:
+                    os.remove(os.path.join(self.output_dir, f))
+                except OSError:
+                    pass
+
         # PyTorch SIMD conversion (avoids numpy float64 promotion)
         img_array = images.cpu().float().mul(255).clamp(0, 255).byte().numpy()
         batch_size, height, width, channels = img_array.shape

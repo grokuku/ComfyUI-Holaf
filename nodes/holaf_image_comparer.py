@@ -14,6 +14,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 # 
 
+import torch
 from nodes import PreviewImage
 import os
 
@@ -78,9 +79,13 @@ class HolafImageComparer(PreviewImage):
     if image_b is not None and len(image_b) > 0:
       saved_b = self.save_images(image_b, filename_prefix + "b_", prompt, extra_pnginfo)
       ui_data['b_images'] = saved_b.get('ui', {}).get('images', [])
+    else:
+      # Return a small placeholder instead of None to avoid downstream crashes
+      import logging
+      logging.getLogger("Holaf.ImageComparer").warning("image_b is None/empty; returning a 1×1 black placeholder.")
+      image_b = torch.zeros(1, 1, 1, 3)
       
     # Return a dictionary compliant with ComfyUI's custom node standards:
     # 'ui' key holds data for the frontend javascript widget.
     # 'result' key holds the data for the node's output connectors.
-    # Note: If image_b is None, the second output will be None.
     return { "ui": ui_data, "result": (image_a, image_b) }

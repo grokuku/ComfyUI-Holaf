@@ -15,7 +15,7 @@
 
 import torch
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageChops
 
 class HolafOverlayNode:
     """
@@ -78,10 +78,7 @@ class HolafOverlayNode:
         elif image_np.ndim == 2:
             image_np = np.stack((image_np,)*3, axis=-1)
 
-        tensor = torch.from_numpy(image_np)
-        if tensor.ndim == 3:
-            tensor = tensor.permute(2, 0, 1)  # HWC to CHW
-        return tensor.unsqueeze(0)  # BCHW
+        return torch.from_numpy(image_np).unsqueeze(0)  # (1, H, W, C) = BHWC
 
     def overlay(self, background_image, overlay_image, horizontal_align, vertical_align, offset_percent, size_percent, opacity, mask=None):
         if not isinstance(background_image, torch.Tensor) or not isinstance(overlay_image, torch.Tensor):
@@ -161,7 +158,9 @@ class HolafOverlayNode:
             
             # --- Compositing ---
             result_pil = bg_pil.copy()
-            result_pil.paste(ov_pil, (paste_x, paste_y), ov_pil)  # Use RGBA overlay as its own mask
+            # Combine user mask with overlay alpha channel
+            final_mask = ImageChops.multiply(base_mask_pil, ov_pil.split()[3])
+            result_pil.paste(ov_pil, (paste_x, paste_y), final_mask)
             
             results.append(self.pil_to_tensor(result_pil))
 
@@ -169,5 +168,4 @@ class HolafOverlayNode:
             return (background_image,)
 
         result_tensor_batch = torch.cat(results, dim=0)
-        result_tensor_batch_bhwc = result_tensor_batch.permute(0, 2, 3, 1)
-        return (result_tensor_batch_bhwc,)
+        return (result_tensor_batch,)

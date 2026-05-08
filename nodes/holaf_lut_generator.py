@@ -132,23 +132,20 @@ class HolafLutGenerator:
             neutral_pixels = neutral_np_uint8.reshape(-1, 3)
             graded_pixels = graded_np_uint8.reshape(-1, 3)
 
-            # Scaling factor to map 8-bit color values (0-255) to LUT grid indices (0 to lut_size-1).
+            # Vectorized LUT population: accumulate all pixel pairs and average duplicates.
             scale = (lut_size - 1) / 255.0
+            indices = (np.rint(neutral_pixels * scale).clip(0, lut_size - 1)).astype(np.int32)
+            values = graded_pixels / 255.0
 
-            # Iterate through each pixel pair to populate the LUT.
-            for i in range(neutral_pixels.shape[0]):
-                # The color from the neutral image is the 'address' or coordinate in the LUT.
-                r_in, g_in, b_in = neutral_pixels[i]
-                # The color from the graded image is the 'value' to be stored at that address.
-                r_out, g_out, b_out = graded_pixels[i]
-                
-                # Convert input color to LUT grid indices.
-                r_idx = int(round(r_in * scale))
-                g_idx = int(round(g_in * scale))
-                b_idx = int(round(b_in * scale))
-                
-                # Assign the output color (normalized to [0,1]) to the corresponding LUT grid point.
-                final_lut_np[b_idx, g_idx, r_idx] = [r_out / 255.0, g_out / 255.0, b_out / 255.0]
+            # Accumulate values and counts per LUT cell
+            np.add.at(final_lut_np, (indices[:, 2], indices[:, 1], indices[:, 0]), values)
+            count_np = np.zeros((lut_size, lut_size, lut_size), dtype=np.float32)
+            np.add.at(count_np, (indices[:, 2], indices[:, 1], indices[:, 0]), 1.0)
+
+            # Average (avoid division by zero)
+            count_4d = count_np[..., np.newaxis]
+            count_4d[count_4d == 0] = 1.0
+            final_lut_np = final_lut_np / count_4d
 
             neutral_image_for_output = neutral_image
         else:

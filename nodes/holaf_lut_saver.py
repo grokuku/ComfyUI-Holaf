@@ -18,6 +18,16 @@ import os
 import datetime
 import folder_paths
 
+def _validate_lut_path(base_path, allowed_base=None):
+    """Prevent path traversal by ensuring resolved path stays within allowed_base."""
+    if allowed_base is None:
+        allowed_base = folder_paths.get_folder_paths("luts")[0]
+    abs_base = os.path.abspath(os.path.expanduser(base_path))
+    abs_allowed = os.path.abspath(allowed_base)
+    if not (abs_base == abs_allowed or abs_base.startswith(abs_allowed + os.sep)):
+        return allowed_base
+    return base_path
+
 class HolafLutSaver:
     """
     Saves a HOLAF_LUT_DATA object, typically from a generator or loader node,
@@ -95,7 +105,7 @@ class HolafLutSaver:
             formatted_filename_base = filename # Fallback if format string is invalid.
 
         # Construct the full output path and create the directory if it doesn't exist.
-        output_path = os.path.join(base_path, formatted_subfolder)
+        output_path = os.path.join(_validate_lut_path(base_path), formatted_subfolder)
         os.makedirs(output_path, exist_ok=True)
 
         final_filepath, final_filename = self.get_unique_filepath(output_path, formatted_filename_base, ".cube")
@@ -106,18 +116,9 @@ class HolafLutSaver:
                 f.write(f'TITLE "{title}"\n')
                 f.write(f'LUT_3D_SIZE {size}\n\n')
                 
-                # IMPORTANT: The .cube format requires data in R-major order (R changes fastest,
-                # then G, then B). Our NumPy array is indexed as [B, G, R].
-                # Therefore, this nested loop order correctly reads from our array
-                # to write the data in the required sequence for the file format.
-                for b in range(size):
-                    for g in range(size):
-                        for r in range(size):
-                            # Get the [R, G, B] triplet from our [B, G, R] indexed array.
-                            rgb_values = lut_np[b, g, r]
-                            # Write each triplet to the file, formatted to 6 decimal places.
-                            line = f"{rgb_values[0]:.6f} {rgb_values[1]:.6f} {rgb_values[2]:.6f}\n"
-                            f.write(line)
+                # Vectorized write: numpy C-order gives R-major (R changes fastest) automatically.
+                lut_flat = lut_np.reshape(-1, 3)
+                np.savetxt(f, lut_flat, fmt='%.6f %.6f %.6f')
             
         except Exception as e:
             print(f"[HolafLutSaver] Error writing .cube file to {final_filepath}: {e}")

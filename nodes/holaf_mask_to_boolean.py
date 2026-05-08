@@ -57,8 +57,3 @@ class HolafMaskToBoolean:
         is_empty = torch.all(mask == 0).item()
         
         return (is_empty,)
-
-# This mapping is used by __init__.py to register the node with ComfyUI.
-NODE_CLASS_MAPPINGS = {
-  'HolafMaskToBoolean': HolafMaskToBoolean,
-}

@@ -89,10 +89,16 @@ app.registerExtension({
 
                 // --- Logique d'upload (maintenant liée au bouton HTML) ---
                 // Remove any stale fileInput from a previous hot-reload registration
-                const oldFileInput = document.getElementById('holaf_file_input');
+                const fileInputId = 'holaf_file_input_' + node.id;
+                // Also clean up orphaned inputs by class+data attribute
+                document.querySelectorAll('input.holaf_file_input[data-node-id="' + node.id + '"]')
+                    .forEach(el => el.remove());
+                const oldFileInput = document.getElementById(fileInputId);
                 if (oldFileInput) oldFileInput.remove();
                 const fileInput = document.createElement("input");
-                fileInput.id = 'holaf_file_input';
+                fileInput.id = fileInputId;
+                fileInput.className = 'holaf_file_input';
+                fileInput.dataset.nodeId = node.id;
                 Object.assign(fileInput, { type: "file", accept: "image/*,video/*,.mkv,.avi,.mov", style: "display:none" });
                 document.body.appendChild(fileInput);
 

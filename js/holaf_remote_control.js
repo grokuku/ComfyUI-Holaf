@@ -15,7 +15,10 @@ const HOLAF_GROUP_BYPASSER_TYPE = "HolafGroupBypasser";
 const HOLAF_REMOTE_TYPE = "HolafRemote";
 const HOLAF_REMOTE_SELECTOR_TYPE = "HolafRemoteSelector";
 
-let IS_SYNCING = false;
+// IS_SYNCING prevents recursive group state synchronization.
+// JavaScript is single-threaded, so this flag is sufficient.
+// Scoped per-graph to avoid interference across multiple graph instances.
+const _holafSyncingPerGraph = new WeakMap();
 
 app.registerExtension({
     name: "holaf.RemoteControl",
@@ -126,7 +129,7 @@ app.registerExtension({
                 const originalActiveCallback = activeWidget.callback;
                 activeWidget.callback = (value) => {
                     if (originalActiveCallback) originalActiveCallback(value);
-                    if (IS_SYNCING) return;
+                    if (_holafSyncingPerGraph.get(app.graph)) return;
 
                     const groupName = groupWidget.value;
                     this.syncGroupState(app.graph, groupName, value);
@@ -185,7 +188,7 @@ app.registerExtension({
                 // Logic on Selection Change
                 // We assign the callback directly to the (potentially new) widget
                 activeWidget.callback = (value) => {
-                    if (IS_SYNCING) return;
+                    if (_holafSyncingPerGraph.get(app.graph)) return;
 
                     const allGroups = listWidget.value.split("\n").map(s => s.trim()).filter(s => s);
 
@@ -226,8 +229,9 @@ app.registerExtension({
 
             // --- SYNC ENGINE ---
             nodeType.prototype.syncGroupState = function (targetGraph, groupName, newState) {
-                const wasSyncing = IS_SYNCING;
-                IS_SYNCING = true;
+                if (!_holafSyncingPerGraph.has(targetGraph)) _holafSyncingPerGraph.set(targetGraph, false);
+                const wasSyncing = _holafSyncingPerGraph.get(targetGraph);
+                _holafSyncingPerGraph.set(targetGraph, true);
 
                 try {
                     const traverse = (graph) => {
@@ -249,7 +253,7 @@ app.registerExtension({
                     };
                     if (!wasSyncing) traverse(targetGraph);
                 } finally {
-                    if (!wasSyncing) IS_SYNCING = false;
+                    if (!wasSyncing) _holafSyncingPerGraph.set(targetGraph, false);
                 }
             };
 
@@ -323,8 +327,10 @@ app.registerExtension({
                     if (node.id === this.id) continue;
                     if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE].includes(node.type)) continue;
 
-                    if (node.pos[0] >= gX && node.pos[0] <= gX + gW &&
-                        node.pos[1] >= gY && node.pos[1] <= gY + gH) {
+                    // Use node center for more accurate hit-testing
+                    const cx = node.pos[0] + (node.size?.[0] || 0) / 2;
+                    const cy = node.pos[1] + (node.size?.[1] || 0) / 2;
+                    if (cx >= gX && cx <= gX + gW && cy >= gY && cy <= gY + gH) {
 
                         if (node.mode !== targetMode) {
                             node.mode = targetMode;
