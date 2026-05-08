@@ -129,8 +129,8 @@ class HolafTiledKSampler:
         else:
             f_mask_x_full = _build_feather_mask_1d(tile_w_latent, overlap_latent, device="cpu")
             f_mask_y_full = _build_feather_mask_1d(tile_h_latent, overlap_latent, device="cpu")
-            feather_2d_full = f_mask_y_full.unsqueeze(0) * f_mask_x_full.unsqueeze(1)
-            feather_4d_full = feather_2d_full.unsqueeze(0).unsqueeze(0)  # [1, 1, th, tw]
+            feather_2d_full = f_mask_y_full.unsqueeze(1) * f_mask_x_full.unsqueeze(0)  # (H, W)
+            feather_4d_full = feather_2d_full.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
             logger.debug("  feather_4d_full shape: %s", list(feather_4d_full.shape))
 
         for y in range(y_slices):
@@ -187,7 +187,7 @@ class HolafTiledKSampler:
                     logger.debug("  tile[%d,%d] rebuilding feather mask for size (%d,%d)", y, x, eh, ew)
                     f_mask_x = _build_feather_mask_1d(ew, overlap_latent, device="cpu")
                     f_mask_y = _build_feather_mask_1d(eh, overlap_latent, device="cpu")
-                    feather_2d = f_mask_y.unsqueeze(0) * f_mask_x.unsqueeze(1)
+                    feather_2d = f_mask_y.unsqueeze(1) * f_mask_x.unsqueeze(0)  # (H, W)
                     feather_4d = feather_2d.unsqueeze(0).unsqueeze(0)  # [1, 1, eh, ew]
 
                 # Safety: ensure shapes match before multiply
@@ -269,6 +269,8 @@ class HolafTiledKSampler:
         l_view_y = [1] * latent_samples.ndim
         l_view_y[-2] = tile_h_latent
         base_feather_mask_latent = f_mask_y.view(l_view_y) * f_mask_x.view(l_view_x)
+        # Also keep a 2D version for the per-tile mask construction (tile_mask is 2D)
+        base_mask_2d = base_feather_mask_latent.squeeze()  # (H, W)
         
         pbar = comfy.utils.ProgressBar(x_slices * y_slices)
         step_x_latent, step_y_latent = tile_w_latent - overlap_latent, tile_h_latent - overlap_latent
@@ -285,20 +287,20 @@ class HolafTiledKSampler:
                 tile_mask = torch.ones((tile_h_latent, tile_w_latent), device="cpu")
                 if has_neighbor_x:
                     if x == 0:
-                        tile_mask[:, tile_w_latent - overlap_latent:] = base_feather_mask_latent[..., :, tile_w_latent - overlap_latent:].clone()
+                        tile_mask[:, tile_w_latent - overlap_latent:] = base_mask_2d[:, tile_w_latent - overlap_latent:].clone()
                     elif x == x_slices - 1:
-                        tile_mask[:, :overlap_latent] = base_feather_mask_latent[..., :, :overlap_latent].clone()
+                        tile_mask[:, :overlap_latent] = base_mask_2d[:, :overlap_latent].clone()
                     else:
-                        tile_mask[:, :overlap_latent] = base_feather_mask_latent[..., :, :overlap_latent].clone()
-                        tile_mask[:, tile_w_latent - overlap_latent:] = base_feather_mask_latent[..., :, tile_w_latent - overlap_latent:].clone()
+                        tile_mask[:, :overlap_latent] = base_mask_2d[:, :overlap_latent].clone()
+                        tile_mask[:, tile_w_latent - overlap_latent:] = base_mask_2d[:, tile_w_latent - overlap_latent:].clone()
                 if has_neighbor_y:
                     if y == 0:
-                        tile_mask[tile_h_latent - overlap_latent:, :] *= base_feather_mask_latent[..., tile_h_latent - overlap_latent:, :].clone()
+                        tile_mask[tile_h_latent - overlap_latent:, :] *= base_mask_2d[tile_h_latent - overlap_latent:, :].clone()
                     elif y == y_slices - 1:
-                        tile_mask[:overlap_latent, :] *= base_feather_mask_latent[..., :overlap_latent, :].clone()
+                        tile_mask[:overlap_latent, :] *= base_mask_2d[:overlap_latent, :].clone()
                     else:
-                        tile_mask[:overlap_latent, :] *= base_feather_mask_latent[..., :overlap_latent, :].clone()
-                        tile_mask[tile_h_latent - overlap_latent:, :] *= base_feather_mask_latent[..., tile_h_latent - overlap_latent:, :].clone()
+                        tile_mask[:overlap_latent, :] *= base_mask_2d[:overlap_latent, :].clone()
+                        tile_mask[tile_h_latent - overlap_latent:, :] *= base_mask_2d[tile_h_latent - overlap_latent:, :].clone()
                 
                 tile_feather_mask_latent = tile_mask.view(l_view_y).expand_as(latent_samples[..., y_start:y_end, x_start:x_end])
                 
@@ -350,14 +352,16 @@ class HolafTiledKSampler:
             p_view_y = [1] * first_decoded.ndim
             p_view_y[-3] = tile_h_pixel
             base_feather_mask_pixel = pf_mask_y.view(p_view_y) * pf_mask_x.view(p_view_x)
+            # Also keep a 2D version for per-tile mask construction (tile_pixel_mask is 2D)
+            base_pixel_mask_2d = base_feather_mask_pixel.squeeze()  # (H, W)
             
             # Store first tile result
             # First tile is always at (0,0) — only fade right/bottom if neighbors exist
             first_tile_mask = torch.ones((tile_h_pixel, tile_w_pixel), device="cpu")
             if has_neighbor_x:
-                first_tile_mask[:, tile_w_pixel - overlap_pixel:] = base_feather_mask_pixel[..., :, tile_w_pixel - overlap_pixel:].clone()
+                first_tile_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:].clone()
             if has_neighbor_y:
-                first_tile_mask[tile_h_pixel - overlap_pixel:, :] *= base_feather_mask_pixel[..., tile_h_pixel - overlap_pixel:, :].clone()
+                first_tile_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :].clone()
             first_tile_mask_expanded = first_tile_mask.view(p_view_y).expand_as(first_decoded.cpu())
             
             image_out[..., 0:tile_h_pixel, 0:tile_w_pixel, :] += first_decoded.cpu() * first_tile_mask_expanded
@@ -383,20 +387,20 @@ class HolafTiledKSampler:
                     tile_pixel_mask = torch.ones((tile_h_pixel, tile_w_pixel), device="cpu")
                     if has_neighbor_x:
                         if x == 0:
-                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_feather_mask_pixel[..., :, tile_w_pixel - overlap_pixel:].clone()
+                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:].clone()
                         elif x == x_slices - 1:
-                            tile_pixel_mask[:, :overlap_pixel] = base_feather_mask_pixel[..., :, :overlap_pixel].clone()
+                            tile_pixel_mask[:, :overlap_pixel] = base_pixel_mask_2d[:, :overlap_pixel].clone()
                         else:
-                            tile_pixel_mask[:, :overlap_pixel] = base_feather_mask_pixel[..., :, :overlap_pixel].clone()
-                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_feather_mask_pixel[..., :, tile_w_pixel - overlap_pixel:].clone()
+                            tile_pixel_mask[:, :overlap_pixel] = base_pixel_mask_2d[:, :overlap_pixel].clone()
+                            tile_pixel_mask[:, tile_w_pixel - overlap_pixel:] = base_pixel_mask_2d[:, tile_w_pixel - overlap_pixel:].clone()
                     if has_neighbor_y:
                         if y == 0:
-                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_feather_mask_pixel[..., tile_h_pixel - overlap_pixel:, :].clone()
+                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :].clone()
                         elif y == y_slices - 1:
-                            tile_pixel_mask[:overlap_pixel, :] *= base_feather_mask_pixel[..., :overlap_pixel, :].clone()
+                            tile_pixel_mask[:overlap_pixel, :] *= base_pixel_mask_2d[:overlap_pixel, :].clone()
                         else:
-                            tile_pixel_mask[:overlap_pixel, :] *= base_feather_mask_pixel[..., :overlap_pixel, :].clone()
-                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_feather_mask_pixel[..., tile_h_pixel - overlap_pixel:, :].clone()
+                            tile_pixel_mask[:overlap_pixel, :] *= base_pixel_mask_2d[:overlap_pixel, :].clone()
+                            tile_pixel_mask[tile_h_pixel - overlap_pixel:, :] *= base_pixel_mask_2d[tile_h_pixel - overlap_pixel:, :].clone()
                     tile_mask_expanded = tile_pixel_mask.view(p_view_y).expand_as(torch.zeros(out_shape, device="cpu")[..., py_start:py_end, px_start:px_end, :])
                     
                     tile_latent_subset = final_latent_samples[..., ly_start:ly_end, lx_start:lx_end].to(vae_device)
