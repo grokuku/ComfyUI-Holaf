@@ -84,7 +84,10 @@ app.registerExtension({
                 mainContainer.appendChild(previewContainer);
                 mainContainer.appendChild(uploadButton);
 
-                // On injecte le tout dans UN SEUL widget DOM
+                // On injecte le tout dans UN SEUL widget DOM.
+                // Note : addDOMWidget crée un wrapper autour de mainContainer.
+                // Ce wrapper DOIT aussi avoir pointer-events: none sinon il bloque
+                // le clic droit (menu Firefox au lieu du menu LiteGraph).
                 const domWidgetIdx = node.addDOMWidget("holaf_media_loader", "div", mainContainer, {
                     serialize: false,
                     hideOnZoom: false
@@ -93,18 +96,28 @@ app.registerExtension({
                     ? node.widgets[domWidgetIdx]
                     : node.widgets.find(w => w.name === "holaf_media_loader");
 
+                // Attendre que le wrapper DOM soit monté, puis forcer pointer-events: none
+                requestAnimationFrame(() => {
+                    const wrapper = mainContainer.parentElement;
+                    if (wrapper) wrapper.style.pointerEvents = "none";
+                });
+
                 // Le conteneur DOM doit suivre la taille du nœud.
-                // On utilise last_y du DOM widget (position calculée par ComfyUI lors
-                // du layout) pour déterminer l'espace disponible.
+                const applyHeight = () => {
+                    const titleBar = LiteGraph.NODE_TITLE_HEIGHT || 24;
+                    const top = (domWidget && domWidget.last_y > 0) ? domWidget.last_y : titleBar + 40;
+                    const freeHeight = Math.max(50, (node.size?.[1] || 200) - top - 8);
+                    mainContainer.style.height = freeHeight + "px";
+                };
+
                 const origOnResize = node.onResize;
                 node.onResize = function(size) {
                     if (origOnResize) origOnResize.apply(this, arguments);
-                    // Hauteur dispo = hauteur du nœud − position Y du widget − marge basse
-                    const titleBar = LiteGraph.NODE_TITLE_HEIGHT || 24;
-                    const top = (domWidget && domWidget.last_y > 0) ? domWidget.last_y : titleBar + 40;
-                    const freeHeight = Math.max(50, size[1] - top - 8);
-                    mainContainer.style.height = freeHeight + "px";
+                    applyHeight();
                 };
+
+                // Appel initial après le premier layout du canvas
+                setTimeout(applyHeight, 50);
 
                 const updatePreview = (filename) => {
                     previewContainer.innerHTML = "";
