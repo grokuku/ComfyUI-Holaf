@@ -49,7 +49,8 @@ app.registerExtension({
                     pointerEvents: "none"
                 });
 
-                // 2. Le conteneur du preview — flex:1 pour remplir l'espace restant
+                // 2. Le conteneur du preview — flex:1 + pointer-events:none
+                //    pour que le clic droit traverse jusqu'au canvas LiteGraph.
                 const previewContainer = document.createElement("div");
                 Object.assign(previewContainer.style, {
                     width: "100%",
@@ -60,7 +61,8 @@ app.registerExtension({
                     display: "flex",
                     justifyContent: "center",
                     alignItems: "center",
-                    overflow: "hidden"
+                    overflow: "hidden",
+                    pointerEvents: "none"
                 });
 
                 // 3. Le bouton — pointer-events: auto pour rester cliquable
@@ -120,7 +122,7 @@ app.registerExtension({
                     else { el = document.createElement("img"); }
                     el.src = url;
 
-                    Object.assign(el.style, { width: "100%", height: "100%", objectFit: "contain", display: "block" });
+                    Object.assign(el.style, { width: "100%", height: "100%", objectFit: "contain", display: "block", pointerEvents: "none" });
                     previewContainer.appendChild(el);
                 };
 
