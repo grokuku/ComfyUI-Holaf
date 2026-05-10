@@ -1,11 +1,36 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
+// ── Upload helper (used both by file input and clipboard paste) ──
+async function uploadFileAndSetWidget(node, file, uploadButton) {
+    const widget = node.widgets.find(w => w.name === "media_file");
+    if (!widget) return;
+    const formData = new FormData();
+    formData.append("image", file);
+    formData.append("overwrite", "true");
+    try {
+        if (uploadButton) uploadButton.textContent = "⏳ Uploading...";
+        const resp = await api.fetchApi("/upload/image", { method: "POST", body: formData });
+        if (resp.status === 200) {
+            const data = await resp.json();
+            if (!widget.options.values.includes(data.name)) widget.options.values.push(data.name);
+            widget.value = data.name;
+            widget.callback?.(data.name);
+        } else {
+            alert(`Upload failed: ${resp.status}`);
+        }
+    } catch (err) {
+        alert(`Error: ${err.message}`);
+    } finally {
+        if (uploadButton) uploadButton.textContent = "📤 Upload Image/Video";
+    }
+}
+
 app.registerExtension({
     name: "Holaf.LoadImageVideo",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "HolafLoadImageVideo") {
-            
+
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 if (onNodeCreated) onNodeCreated.apply(this, arguments);
@@ -13,20 +38,23 @@ app.registerExtension({
                 const node = this;
                 const widget = node.widgets.find(w => w.name === "media_file");
                 
-                // 1. Conteneur principal qui gère la disposition verticale
+                // 1. Conteneur principal — pointer-events: none pour que le clic droit
+                //    (menu contextuel standard de ComfyUI) traverse vers le canvas.
                 const mainContainer = document.createElement("div");
                 Object.assign(mainContainer.style, {
                     width: "100%",
                     display: "flex",
                     flexDirection: "column",
-                    gap: "5px" // Espace entre le preview et le bouton
+                    gap: "5px",
+                    pointerEvents: "none"
                 });
 
-                // 2. Le conteneur du preview (comme avant)
+                // 2. Le conteneur du preview — flex:1 pour remplir l'espace restant
                 const previewContainer = document.createElement("div");
                 Object.assign(previewContainer.style, {
                     width: "100%",
-                    height: "200px",
+                    flex: "1 1 auto",
+                    minHeight: "50px",
                     backgroundColor: "rgba(0,0,0,0.2)",
                     borderRadius: "4px",
                     display: "flex",
@@ -35,18 +63,19 @@ app.registerExtension({
                     overflow: "hidden"
                 });
 
-                // 3. Le bouton, maintenant en HTML, plus en widget canvas
+                // 3. Le bouton — pointer-events: auto pour rester cliquable
                 const uploadButton = document.createElement("button");
                 uploadButton.textContent = "📤 Upload Image/Video";
                 Object.assign(uploadButton.style, {
                     width: "100%",
                     padding: "5px",
-                    fontSize: "inherit", // S'adapte au style de Comfy
+                    fontSize: "inherit",
                     backgroundColor: "#333",
                     color: "#fff",
                     border: "1px solid #555",
                     borderRadius: "4px",
-                    cursor: "pointer"
+                    cursor: "pointer",
+                    pointerEvents: "auto"
                 });
 
                 // On assemble la structure : Preview en haut, Bouton en bas
@@ -54,17 +83,25 @@ app.registerExtension({
                 mainContainer.appendChild(uploadButton);
 
                 // On injecte le tout dans UN SEUL widget DOM
-                node.addDOMWidget("holaf_media_loader", "div", mainContainer, {
+                const domWidgetIdx = node.addDOMWidget("holaf_media_loader", "div", mainContainer, {
                     serialize: false,
                     hideOnZoom: false
                 });
-                
-                // Le redimensionnement s'applique toujours au conteneur du preview
+                const domWidget = (typeof domWidgetIdx === 'number')
+                    ? node.widgets[domWidgetIdx]
+                    : node.widgets.find(w => w.name === "holaf_media_loader");
+
+                // Le conteneur DOM doit suivre la taille du nœud.
+                // On utilise last_y du DOM widget (position calculée par ComfyUI lors
+                // du layout) pour déterminer l'espace disponible.
+                const origOnResize = node.onResize;
                 node.onResize = function(size) {
-                    const buttonHeight = uploadButton.offsetHeight + 5; // Hauteur bouton + gap
-                    const widgetsHeight = node.widgets.length * 22; // Approximation
-                    const freeHeight = Math.max(50, size[1] - widgetsHeight - buttonHeight); 
-                    previewContainer.style.height = freeHeight + "px";
+                    if (origOnResize) origOnResize.apply(this, arguments);
+                    // Hauteur dispo = hauteur du nœud − position Y du widget − marge basse
+                    const titleBar = LiteGraph.NODE_TITLE_HEIGHT || 24;
+                    const top = (domWidget && domWidget.last_y > 0) ? domWidget.last_y : titleBar + 40;
+                    const freeHeight = Math.max(50, size[1] - top - 8);
+                    mainContainer.style.height = freeHeight + "px";
                 };
 
                 const updatePreview = (filename) => {
@@ -87,10 +124,8 @@ app.registerExtension({
                     previewContainer.appendChild(el);
                 };
 
-                // --- Logique d'upload (maintenant liée au bouton HTML) ---
-                // Remove any stale fileInput from a previous hot-reload registration
+                // --- Upload via file input (bouton HTML) ---
                 const fileInputId = 'holaf_file_input_' + node.id;
-                // Also clean up orphaned inputs by class+data attribute
                 document.querySelectorAll('input.holaf_file_input[data-node-id="' + node.id + '"]')
                     .forEach(el => el.remove());
                 const oldFileInput = document.getElementById(fileInputId);
@@ -102,28 +137,12 @@ app.registerExtension({
                 Object.assign(fileInput, { type: "file", accept: "image/*,video/*,.mkv,.avi,.mov", style: "display:none" });
                 document.body.appendChild(fileInput);
 
-                uploadButton.onclick = () => { fileInput.click(); }; // Le clic sur le bouton HTML déclenche l'input caché
+                uploadButton.onclick = () => { fileInput.click(); };
 
                 fileInput.onchange = async () => {
                     if (!fileInput.files.length) return;
-                    const file = fileInput.files[0];
-                    const formData = new FormData();
-                    formData.append("image", file);
-                    formData.append("overwrite", "true");
-
-                    try {
-                        uploadButton.textContent = "⏳ Uploading...";
-                        const resp = await api.fetchApi("/upload/image", { method: "POST", body: formData });
-                        if (resp.status === 200) {
-                            const data = await resp.json();
-                            if (widget) {
-                                if (!widget.options.values.includes(data.name)) widget.options.values.push(data.name);
-                                widget.value = data.name;
-                                widget.callback(data.name);
-                            }
-                        } else { alert(`Upload failed: ${resp.status}`); }
-                    } catch (err) { alert(`Error: ${err.message}`); } 
-                    finally { uploadButton.textContent = "📤 Upload Image/Video"; fileInput.value = ""; }
+                    await uploadFileAndSetWidget(node, fileInput.files[0], uploadButton);
+                    fileInput.value = "";
                 };
 
                 // --- Reste de la logique (inchangée) ---
@@ -148,6 +167,8 @@ app.registerExtension({
                     }
                 }
             };
+
+
         }
     }
 });
