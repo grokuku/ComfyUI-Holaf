@@ -158,8 +158,7 @@ class HolafToText:
                         detected_mode = "JSON"
 
             else:
-                t = type(any_input).__name__
-                text_val = f"`{t}`: {str(any_input)}"
+                text_val = str(any_input)
                 # Auto-detect markdown in plain strings
                 if detected_mode == "Auto" and text_val.strip().startswith(("#", "- ", "**", "###")):
                     detected_mode = "Markdown"
