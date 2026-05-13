@@ -21,7 +21,7 @@ import folder_paths
 def _validate_lut_path(base_path, allowed_base=None):
     """Prevent path traversal by ensuring resolved path stays within allowed_base."""
     if allowed_base is None:
-        allowed_base = folder_paths.get_folder_paths("luts")[0]
+        allowed_base = folder_paths.get_output_directory()
     abs_base = os.path.abspath(os.path.expanduser(base_path))
     abs_allowed = os.path.abspath(allowed_base)
     if not (abs_base == abs_allowed or abs_base.startswith(abs_allowed + os.sep)):
@@ -35,12 +35,11 @@ class HolafLutSaver:
     including date/time formatting.
     """
     def __init__(self):
-        # Set the default save directory to the 'luts' model folder for convenience.
-        self.output_dir = folder_paths.get_folder_paths("luts")[0]
+        self.output_dir = folder_paths.get_output_directory()
 
     @classmethod
     def INPUT_TYPES(s):
-        default_luts_path = folder_paths.get_folder_paths("luts")[0]
+        default_luts_path = folder_paths.get_output_directory()
         
         return {
             "required": {
