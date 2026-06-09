@@ -131,6 +131,21 @@ MASTER_RESOLUTIONS = {
         "16:9 Landscape (HD Video-Widescreen)": (2048, 1152),
         "~2.39:1 Landscape (Anamorphic Cinema)": (2304, 960),
     },
+    # Ideogram 4 natively supports any resolution from 256 to 2048
+    # (multiples of 16) with aspect ratios up to 6:1.
+    # Values from official docs: https://github.com/ideogram-oss/ideogram4
+    "Ideogram4": {
+        "9:16 Portrait (Mobile Video)": (1024, 1792),
+        "2:3 Portrait (35mm Photo)": (1024, 1536),
+        "3:4 Portrait (Classic Monitor-Photo)": (1152, 1536),
+        "4:5 Portrait (Large Format Photo)": (1024, 1280),
+        "1:1 Square (Instagram-Medium Format)": (1024, 1024),
+        "5:4 Landscape (Large Format Photo)": (1280, 1024),
+        "4:3 Landscape (Classic Monitor-Photo)": (1536, 1152),
+        "3:2 Landscape (35mm Photo)": (1536, 1024),
+        "16:9 Landscape (HD Video-Widescreen)": (1920, 1088),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (2048, 864),
+    },
     # Nucleus-Image was trained with 7 specific aspect ratios using
     # aspect-ratio bucketing. These are the exact resolutions from the
     # model's official documentation. Only these 7 ratios are supported;
