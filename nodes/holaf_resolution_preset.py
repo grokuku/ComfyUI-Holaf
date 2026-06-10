@@ -146,6 +146,21 @@ MASTER_RESOLUTIONS = {
         "16:9 Landscape (HD Video-Widescreen)": (1920, 1088),
         "~2.39:1 Landscape (Anamorphic Cinema)": (2048, 864),
     },
+    # Ideogram4 (Quality) uses the maximum supported resolution (2048px)
+    # on the longest side, for highest-quality generation.
+    # Supported range: 256-2048 (multiples of 16), aspect ratios up to 6:1.
+    "Ideogram4 (Quality)": {
+        "9:16 Portrait (Mobile Video)": (1152, 2048),
+        "2:3 Portrait (35mm Photo)": (1360, 2048),
+        "3:4 Portrait (Classic Monitor-Photo)": (1536, 2048),
+        "4:5 Portrait (Large Format Photo)": (1632, 2048),
+        "1:1 Square (Instagram-Medium Format)": (2048, 2048),
+        "5:4 Landscape (Large Format Photo)": (2048, 1632),
+        "4:3 Landscape (Classic Monitor-Photo)": (2048, 1536),
+        "3:2 Landscape (35mm Photo)": (2048, 1360),
+        "16:9 Landscape (HD Video-Widescreen)": (2048, 1152),
+        "~2.39:1 Landscape (Anamorphic Cinema)": (2048, 864),
+    },
     # Nucleus-Image was trained with 7 specific aspect ratios using
     # aspect-ratio bucketing. These are the exact resolutions from the
     # model's official documentation. Only these 7 ratios are supported;
