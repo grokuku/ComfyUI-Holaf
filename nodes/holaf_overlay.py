@@ -54,6 +54,13 @@ class HolafOverlayNode:
         image_np = tensor.cpu().float().mul(255).clamp(0, 255).byte().numpy()
 
         if image_np.ndim == 3 and image_np.shape[2] in [1, 3, 4]:
+            # Ambiguous case: both shape[0] and shape[2] could be channels.
+            # ComfyUI always uses HWC, so we prefer that interpretation, but
+            # warn when the tensor is small enough to be genuinely ambiguous.
+            if image_np.shape[0] in [1, 3, 4] and image_np.shape[1] <= 4:
+                print(f"[Holaf] Warning: ambiguous tensor shape {image_np.shape} "
+                      f"(both H and C look like channel counts). Assuming HWC "
+                      f"(ComfyUI convention). If this is wrong, pre-squeeze your tensor.")
             pass  # Already HWC
         elif image_np.ndim == 3 and image_np.shape[0] in [1, 3, 4]:
             image_np = np.transpose(image_np, (1, 2, 0))  # CHW to HWC
@@ -99,6 +106,8 @@ class HolafOverlayNode:
                 batch_size = batch_size_ov
             else:
                 batch_size = min(batch_size_bg, batch_size_ov)
+                print(f"[Holaf] Warning: batch size mismatch between background ({batch_size_bg}) and overlay ({batch_size_ov}). "
+                      f"Only the first {batch_size} frame(s) will be processed; the remaining frames are silently discarded.")
 
         results = []
         for i in range(batch_size):

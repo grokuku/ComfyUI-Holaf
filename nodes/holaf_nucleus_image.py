@@ -1,4 +1,4 @@
-# Copyright (C) 2026 Holaf
+# Copyright (C) 2025 Holaf
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -155,6 +155,11 @@ def _load_pipeline(model_dir: str, offload_mode: str, enable_kv_cache: bool):
 
         else:  # full_gpu
             # Everything on GPU.  Requires ~52 GB VRAM.
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    "CUDA is required for full_gpu mode but is not available. "
+                    "Use 'sequential_offload' mode instead or run on a machine with a GPU."
+                )
             pipe.to("cuda")
             logger.info("[Nucleus-Image] VRAM mode: full GPU (requires ~52 GB VRAM).")
 

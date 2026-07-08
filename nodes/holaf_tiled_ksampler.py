@@ -248,11 +248,6 @@ class HolafTiledKSampler:
 
         device = model.load_device
         latent_samples = latent_samples.to(device)
-        noise = comfy.sample.prepare_noise(latent_samples, seed, None).to(device)
-
-        # Prepare conditioning ONCE (not per tile)
-        tile_positive = prepare_cond_for_tile(positive, device)
-        tile_negative = prepare_cond_for_tile(negative, device)
 
         # --- 4. TILED SAMPLING PASS ---
         # Output buffers on CPU to save VRAM during sampling
@@ -313,10 +308,17 @@ class HolafTiledKSampler:
                 tile_feather_mask_latent = tile_mask.view(l_mask_view).expand_as(latent_samples[..., y_start:y_end, x_start:x_end])
                 
                 tile_latent = latent_samples[..., y_start:y_end, x_start:x_end]
-                tile_noise = noise[..., y_start:y_end, x_start:x_end]
                 
                 # Hash-based tile seed for better decorrelation between adjacent tiles
                 tile_seed = int(hashlib.sha256(f"{seed}-{y}-{x}".encode()).hexdigest(), 16) % (2**64)
+                # Generate per-tile noise from tile_seed so each tile gets decorrelated noise.
+                # (Previously the global noise was sliced per tile, which made tile_seed ineffective
+                #  because comfy.sample.sample uses the provided noise as-is when disable_noise=False.)
+                tile_noise = comfy.sample.prepare_noise(tile_latent, tile_seed, None).to(device)
+                # Prepare fresh conditioning per tile to avoid in-place mutation issues
+                # (some samplers modify conditioning in-place for pools/mask).
+                tile_positive = prepare_cond_for_tile(positive, device)
+                tile_negative = prepare_cond_for_tile(negative, device)
                 sampled_output = comfy.sample.sample(model, tile_noise, steps, cfg, sampler_name, scheduler, 
                                                     tile_positive, tile_negative, tile_latent, denoise=denoise, 
                                                     disable_noise=False, callback=None, disable_pbar=True, seed=tile_seed)
@@ -324,7 +326,7 @@ class HolafTiledKSampler:
                 
                 output_latent[..., y_start:y_end, x_start:x_end] += sampled_tile.cpu() * tile_feather_mask_latent
                 blend_mask[..., y_start:y_end, x_start:x_end] += tile_feather_mask_latent
-                del sampled_output, sampled_tile, tile_feather_mask_latent
+                del sampled_output, sampled_tile, tile_feather_mask_latent, tile_positive, tile_negative
                 if clean_vram:
                     comfy.model_management.soft_empty_cache()
                 pbar.update(1)

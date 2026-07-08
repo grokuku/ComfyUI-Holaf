@@ -1,9 +1,12 @@
 import os
+import logging
 import torch
 import numpy as np
 from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 import folder_paths
-import av 
+import av
+
+logger = logging.getLogger("Holaf.LoadImageVideo") 
 
 class HolafLoadImageVideo:
     @classmethod
@@ -79,9 +82,23 @@ class HolafLoadImageVideo:
             for idx, frame in enumerate(container.decode(stream)):
                 if max_frames > 0 and idx >= max_frames:
                     break
-                img_np = frame.to_ndarray(format='rgba').astype(np.float32) / 255.0
-                frames.append(img_np[:, :, :3])
-                masks.append(1.0 - img_np[:, :, 3])
+                try:
+                    img_np = frame.to_ndarray(format='rgba')
+                except Exception as e:
+                    logger.warning("Frame %d: failed to convert to ndarray (%s); skipping.", idx, e)
+                    continue
+                if img_np.ndim != 3 or img_np.shape[2] not in (3, 4):
+                    logger.warning("Frame %d: unexpected array shape %s (expected HxWx3 or HxWx4); skipping.",
+                                   idx, img_np.shape)
+                    continue
+                img_np = img_np.astype(np.float32) / 255.0
+                if img_np.shape[2] == 4:
+                    frames.append(img_np[:, :, :3])
+                    masks.append(1.0 - img_np[:, :, 3])
+                else:
+                    # No alpha channel: fully opaque mask
+                    frames.append(img_np)
+                    masks.append(np.ones(img_np.shape[:2], dtype=np.float32))
             if not frames:
                 raise ValueError("Video read but no frames retrieved.")
         finally:

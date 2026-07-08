@@ -14,9 +14,13 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 # 
 
+import logging
+import os
+
 import torch
 from nodes import PreviewImage
-import os
+
+logger = logging.getLogger("Holaf.ImageComparer")
 
 # --- Node Definition ---
 class HolafImageComparer(PreviewImage):
@@ -81,8 +85,7 @@ class HolafImageComparer(PreviewImage):
       ui_data['b_images'] = saved_b.get('ui', {}).get('images', [])
     else:
       # Return a small placeholder instead of None to avoid downstream crashes
-      import logging
-      logging.getLogger("Holaf.ImageComparer").warning("image_b is None/empty; returning a 1×1 black placeholder.")
+      logger.warning("image_b is None/empty; returning a 1×1 black placeholder.")
       image_b = torch.zeros(1, 1, 1, 3)
       
     # Return a dictionary compliant with ComfyUI's custom node standards:

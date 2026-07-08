@@ -157,6 +157,14 @@ app.registerExtension({
                     // We initialize it with empty values, they will be populated by updateDropdownOptions
                     const newWidget = this.addWidget("combo", "active_group", currentValue, (v) => { }, { values: [] });
 
+                    // addWidget appends to the end of the list; move the new widget
+                    // back to its original position so the visual widget order is preserved.
+                    const insertedIndex = this.widgets.indexOf(newWidget);
+                    if (insertedIndex !== activeWidgetIndex) {
+                        this.widgets.splice(insertedIndex, 1);
+                        this.widgets.splice(activeWidgetIndex, 0, newWidget);
+                    }
+
                     // Ensure the new widget is in the correct variable for the rest of the function
                     activeWidget = newWidget;
                 }
@@ -235,10 +243,11 @@ app.registerExtension({
 
                 try {
                     const traverse = (graph) => {
-                        if (!graph || !graph._nodes) return;
+                        // Guard: ensure graph is a valid object with an array of nodes before traversing.
+                        if (!graph || typeof graph !== 'object' || !Array.isArray(graph._nodes)) return;
                         for (const node of graph._nodes) {
                             if (node === this) continue;
-                            if (node.subgraph) traverse(node.subgraph);
+                            if (node.subgraph && typeof node.subgraph === 'object') traverse(node.subgraph);
 
                             if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE].includes(node.type)) {
                                 const otherGroupWidget = node.widgets.find(w => w.name === "group_name");

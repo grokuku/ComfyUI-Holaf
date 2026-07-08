@@ -28,6 +28,20 @@ def _validate_lut_path(base_path, allowed_base=None):
         return allowed_base
     return base_path
 
+def _validate_lut_subfolder(base_path, subfolder, allowed_base=None):
+    """Prevent path traversal via subfolder by ensuring the full resolved path stays within allowed_base."""
+    import logging
+    logger = logging.getLogger("Holaf.LutSaver")
+    if allowed_base is None:
+        allowed_base = folder_paths.get_output_directory()
+    abs_allowed = os.path.abspath(allowed_base)
+    full_path = os.path.join(base_path, subfolder)
+    abs_full = os.path.abspath(full_path)
+    if not (abs_full == abs_allowed or abs_full.startswith(abs_allowed + os.sep)):
+        logger.warning(f"subfolder '{subfolder}' resolves outside allowed directory '{allowed_base}'. Discarding subfolder.")
+        return ""
+    return subfolder
+
 class HolafLutSaver:
     """
     Saves a HOLAF_LUT_DATA object, typically from a generator or loader node,
@@ -97,6 +111,7 @@ class HolafLutSaver:
             formatted_subfolder = now.strftime(subfolder)
         except Exception:
             formatted_subfolder = subfolder # Fallback if format string is invalid.
+        formatted_subfolder = _validate_lut_subfolder(_validate_lut_path(base_path), formatted_subfolder)
 
         try:
             formatted_filename_base = now.strftime(filename)

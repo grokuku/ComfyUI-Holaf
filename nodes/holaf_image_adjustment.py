@@ -30,6 +30,15 @@ class HolafImageAdjustment:
         # Clone to ensure we don't modify the original tensor if used elsewhere
         img = image.clone()
 
+        # Extract alpha if present so that brightness/contrast/saturation
+        # are only applied to the RGB channels. Alpha must be preserved intact.
+        has_alpha = img.shape[-1] == 4
+        if has_alpha:
+            alpha = img[..., 3:4].clone()
+            img = img[..., :3]
+        else:
+            alpha = None
+
         # 1. Apply Contrast
         # Formula: (color - middle_gray) * contrast + middle_gray
         # We assume 0.5 is middle gray for float images (0.0 - 1.0)
@@ -57,5 +66,9 @@ class HolafImageAdjustment:
 
         # Clamp values to valid 0.0 - 1.0 range to prevent artifacts
         img = torch.clamp(img, 0.0, 1.0)
+
+        # Reattach the original alpha channel (unchanged)
+        if has_alpha:
+            img = torch.cat([img, alpha], dim=-1)
 
         return (img,)

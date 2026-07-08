@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import math
 import torch
 import numpy as np
 from PIL import Image
@@ -58,7 +59,20 @@ class HolafLutGenerator:
         if tensor.ndim == 4:
             tensor = tensor[0]
         image_np = tensor.cpu().float().mul(255).clamp(0, 255).byte().numpy()
-        return Image.fromarray(image_np, 'RGB' if image_np.shape[2] == 3 else 'RGBA')
+        if image_np.ndim == 3:
+            if image_np.shape[2] == 1:
+                # Grayscale: replicate single channel to RGB
+                image_np = np.repeat(image_np, 3, axis=2)
+                mode = 'RGB'
+            elif image_np.shape[2] == 3:
+                mode = 'RGB'
+            elif image_np.shape[2] == 4:
+                mode = 'RGBA'
+            else:
+                raise ValueError(f"Unsupported channel count: {image_np.shape[2]}")
+        else:
+            raise ValueError(f"Expected 3D array (H,W,C), got shape {image_np.shape}")
+        return Image.fromarray(image_np, mode)
 
     def pil_to_tensor(self, image: Image.Image) -> torch.Tensor:
         image_np = np.array(image).astype(np.float32) / 255.0
@@ -66,7 +80,7 @@ class HolafLutGenerator:
 
     def _generate_hald_clut_image(self, size: int) -> Image.Image:
         """Generates a neutral identity LUT image (HALD CLUT) using vectorized numpy."""
-        dim = int(round(size ** 1.5))
+        dim = math.ceil(size ** 1.5)
         step = 255.0 / (size - 1) if size > 1 else 255.0
         
         # Create 3D grid using numpy vectorization instead of triple for loop

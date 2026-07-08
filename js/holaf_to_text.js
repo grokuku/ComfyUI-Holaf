@@ -22,7 +22,7 @@ app.registerExtension({
                 // 2. Code blocks (fenced) — must be before inline code
                 // NOTE: lang is already HTML-escaped above, but we use textContent via
                 // a temporary element for defense-in-depth rather than string interpolation.
-                html = html.replace(/```(\w*)\n([\s\S]*?)```/gim, (match, lang, code) => {
+                html = html.replace(/```(\w*)\n?([\s\S]*?)```/gim, (match, lang, code) => {
                     const tempSpan = document.createElement("span");
                     tempSpan.textContent = lang;
                     const langLabel = lang ? `<span style="color:#666; font-size:10px;">${tempSpan.innerHTML}</span><br>` : "";

@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import numpy as np
 import torch
@@ -41,11 +42,18 @@ class HolafVideoPreview:
             print("⚠️ Holaf Video Preview: PyAV ('av') not installed. Passing through images without preview.")
             return (images,)
 
-        # Clean up old preview files to prevent temp directory bloat
+        # Clean up old preview files to prevent temp directory bloat.
+        # Only remove files older than CLEANUP_AGE_SECONDS to avoid deleting
+        # previews freshly created by other HolafVideoPreview nodes running
+        # in parallel (ComfyUI supports concurrent execution).
+        CLEANUP_AGE_SECONDS = 300  # 5 minutes
+        now = time.time()
         for f in os.listdir(self.output_dir):
             if f.startswith(self.prefix):
+                file_path = os.path.join(self.output_dir, f)
                 try:
-                    os.remove(os.path.join(self.output_dir, f))
+                    if now - os.path.getmtime(file_path) > CLEANUP_AGE_SECONDS:
+                        os.remove(file_path)
                 except OSError:
                     pass
 

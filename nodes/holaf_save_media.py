@@ -95,6 +95,19 @@ class HolafSaveMedia:
             return allowed_base
         return base_path
 
+    @staticmethod
+    def _validate_subfolder(base_path, subfolder, allowed_base=None):
+        """Prevent path traversal via subfolder by ensuring the full resolved path stays within allowed_base."""
+        if allowed_base is None:
+            allowed_base = folder_paths.get_output_directory()
+        abs_allowed = os.path.abspath(allowed_base)
+        full_path = os.path.join(base_path, subfolder)
+        abs_full = os.path.abspath(full_path)
+        if not (abs_full == abs_allowed or abs_full.startswith(abs_allowed + os.sep)):
+            logger.warning(f"subfolder '{subfolder}' resolves outside allowed directory '{allowed_base}'. Discarding subfolder.")
+            return ""
+        return subfolder
+
     def get_unique_filepath(self, directory, base_filename, ext):
         filepath = os.path.join(directory, f"{base_filename}{ext}")
         counter = 1
@@ -116,12 +129,23 @@ class HolafSaveMedia:
                 logger.info(f"Error saving prompt: {e}")
 
         # Save Workflow
-        workflow_data = extra_pnginfo.get('workflow') if extra_pnginfo else prompt_hidden
+        # Only use the actual workflow graph from extra_pnginfo.
+        # Never fall back to prompt_hidden (which is the API prompt, not the
+        # UI workflow) — that would silently write the prompt as if it were
+        # the workflow and cause data loss for the user.
+        workflow_data = None
+        if extra_pnginfo and isinstance(extra_pnginfo, dict):
+            workflow_data = extra_pnginfo.get('workflow')
+
         if workflow_data:
             try:
                 workflow_json = json.dumps(workflow_data, indent=2)
             except Exception as e:
                 workflow_json = json.dumps({"error": f"Failed to serialize workflow: {e}"})
+        else:
+            workflow_json = ""
+            if save_workflow:
+                logger.info("Workflow not available in extra_pnginfo; skipping workflow JSON save.")
 
         if save_workflow and workflow_json:
             workflow_path = os.path.join(output_path, f"{base_name}.json")
@@ -181,6 +205,25 @@ class HolafSaveMedia:
         if os.path.isdir(shm) and os.access(shm, os.W_OK):
             return shm
         return tempfile.gettempdir()
+
+    @staticmethod
+    def _validate_temp_dir(temp_dir):
+        """Ensure user-supplied temp_dir stays within an allowed safe directory.
+        Allowed bases: ComfyUI temp directory, system temp directory, /dev/shm.
+        Returns the validated temp_dir, or None if it is outside allowed areas."""
+        allowed_bases = []
+        try:
+            allowed_bases.append(os.path.abspath(folder_paths.get_temp_directory()))
+        except Exception:
+            pass
+        allowed_bases.append(os.path.abspath(tempfile.gettempdir()))
+        allowed_bases.append(os.path.abspath("/dev/shm"))
+
+        abs_dir = os.path.abspath(os.path.expanduser(temp_dir))
+        for allowed in allowed_bases:
+            if abs_dir == allowed or abs_dir.startswith(allowed + os.sep):
+                return temp_dir
+        return None
 
     @staticmethod
     def _is_codec_available(codec_name):
@@ -250,6 +293,7 @@ class HolafSaveMedia:
             formatted_subfolder = now.strftime(subfolder)
         except Exception:
             formatted_subfolder = now.strftime('%Y-%m-%d')
+        formatted_subfolder = self._validate_subfolder(base_path, formatted_subfolder)
         try:
             formatted_filename_base = now.strftime(filename)
         except Exception:
@@ -261,7 +305,12 @@ class HolafSaveMedia:
         # Resolve temp directory for fast encoding
         if temp_dir_setting and temp_dir_setting.strip():
             temp_dir = temp_dir_setting.strip()
-            if not (os.path.isdir(temp_dir) and os.access(temp_dir, os.W_OK)):
+            # Security: restrict user-supplied temp_dir to allowed safe directories
+            validated = self._validate_temp_dir(temp_dir)
+            if validated is None:
+                logger.warning(f"{ts()} temp_dir '{temp_dir}' resolves outside allowed directories; ignoring and auto-detecting.")
+                temp_dir = self._detect_temp_dir()
+            elif not (os.path.isdir(temp_dir) and os.access(temp_dir, os.W_OK)):
                 logger.info(f"{ts()} temp_dir '{temp_dir}' not writable, auto-detecting.")
                 temp_dir = self._detect_temp_dir()
         else:
@@ -388,7 +437,8 @@ class HolafSaveMedia:
                 else:
                     v_stream.pix_fmt = 'yuv420p'
                     if is_nvenc:
-                        v_stream.options = {'preset': 'p4', 'cq': str(v_quality)}
+                        # NVENC 'cq' valid range is 0–51; clamp to avoid encode errors
+                        v_stream.options = {'preset': 'p4', 'cq': str(min(v_quality, 51))}
                     else:
                         v_stream.options = {'crf': str(v_quality)}
 

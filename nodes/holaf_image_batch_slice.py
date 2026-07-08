@@ -38,7 +38,12 @@ class HolafImageBatchSlice:
 
     def slice_batch(self, images, start_index, end_index):
         # images shape is [batch_size, height, width, channels]
-        
+
+        # 0. Guard: empty batch (edge case B9)
+        if images.shape[0] == 0:
+            print("[Holaf Image Batch Slice] WARNING: Input batch is empty (0 images). Returning empty batch.")
+            return (images,)
+
         # 1. Clamp start_index to valid range
         if start_index < 0:
             start_index = 0

@@ -603,7 +603,7 @@ class HolafImageComparerWidget extends HolafBaseWidget {
 
 // --- The main LiteGraph node for the Image Comparer ---
 function imageDataToUrl(data) {
-    return api.apiURL(`/view?filename=${encodeURIComponent(data.filename)}&type=${data.type}&subfolder=${data.subfolder}${app.getPreviewFormatParam()}${app.getRandParam()}`);
+    return api.apiURL(`/view?filename=${encodeURIComponent(data.filename)}&type=${encodeURIComponent(data.type)}&subfolder=${encodeURIComponent(data.subfolder)}${app.getPreviewFormatParam()}${app.getRandParam()}`);
 }
 
 class HolafImageComparer extends HolafBaseServerNode {
