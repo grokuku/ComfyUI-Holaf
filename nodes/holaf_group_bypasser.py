@@ -1,4 +1,4 @@
-from .holaf_bypasser import ANY_TYPE
+from .holaf_utils import ANY_TYPE
 
 class HolafGroupBypasser:
     def __init__(self):

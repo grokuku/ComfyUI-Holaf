@@ -15,8 +15,11 @@
 
 import torch
 import math
+import logging
 import torch.nn.functional as F
 import folder_paths
+
+logger = logging.getLogger("Holaf.UpscaleImage")
 import comfy.model_management
 import comfy.utils
 from spandrel import ModelLoader
@@ -42,7 +45,7 @@ class UpscaleImageHolaf:
                 upscale_model_list = ["None"]
         except Exception:
             upscale_model_list = ["None"]
-            print("Warning: Could not access upscale_models folder.")
+            logger.warning("Could not access upscale_models folder.")
 
         return {
             "required": {
@@ -194,5 +197,10 @@ class UpscaleImageHolaf:
                     y_start = max(0, (target_height - temp_h) // 2)
                     new_image[:, y_start:y_start+temp_h, x_start:x_start+temp_w, :] = upscaled_image
                     upscaled_image = new_image
+
+        # --- Release upscale model from VRAM ---
+        # The model was moved to GPU during tiled_scale; release it so VRAM is freed.
+        del upscale_model, upscale_model_descriptor
+        comfy.model_management.soft_empty_cache()
 
         return (upscaled_image, model_name)

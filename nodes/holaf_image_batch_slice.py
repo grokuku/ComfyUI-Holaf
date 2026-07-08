@@ -1,4 +1,7 @@
 import torch
+import logging
+
+logger = logging.getLogger("Holaf.ImageBatchSlice")
 
 class HolafImageBatchSlice:
     """
@@ -41,7 +44,7 @@ class HolafImageBatchSlice:
 
         # 0. Guard: empty batch (edge case B9)
         if images.shape[0] == 0:
-            print("[Holaf Image Batch Slice] WARNING: Input batch is empty (0 images). Returning empty batch.")
+            logger.warning("Input batch is empty (0 images). Returning empty batch.")
             return (images,)
 
         # 1. Clamp start_index to valid range
@@ -59,6 +62,6 @@ class HolafImageBatchSlice:
         sliced_images = images[start_index:slice_end]
         
         # Debug info
-        print(f"[Holaf Image Batch Slice] Request: {start_index} to {end_index}. Output count: {sliced_images.shape[0]}")
+        logger.info(f"Request: {start_index} to {end_index}. Output count: {sliced_images.shape[0]}")
 
         return (sliced_images,)

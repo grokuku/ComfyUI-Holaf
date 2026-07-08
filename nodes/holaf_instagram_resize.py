@@ -17,6 +17,8 @@ import torch
 from PIL import Image, ImageColor
 import numpy as np
 
+from .holaf_utils import tensor_to_pil, pil_to_tensor
+
 class HolafInstagramResize:
     """
     Resizes an image to the nearest Instagram aspect ratio (1:1, 4:5, 16:9)
@@ -44,10 +46,9 @@ class HolafInstagramResize:
 
     def resize_image(self, image, fill_color, auto_color):
         # Convert the input tensor (Batch, H, W, C) to PIL Images and process all frames.
-        img_array = image.cpu().float().mul(255).clamp(0, 255).byte().numpy()
         results = []
         for b in range(image.shape[0]):
-            img = Image.fromarray(img_array[b])
+            img = tensor_to_pil(image[b])
 
             width, height = img.size
             aspect_ratio = width / height
@@ -97,10 +98,9 @@ class HolafInstagramResize:
             resized_img.paste(img, (x_offset, y_offset))
 
             # Convert the final PIL Image back to a torch tensor for ComfyUI.
-            resized_img_array = np.array(resized_img).astype(np.float32) / 255.0
-            results.append(resized_img_array)
+            results.append(pil_to_tensor(resized_img))
 
-        final_tensor = torch.from_numpy(np.stack(results)).float()
+        final_tensor = torch.cat(results, dim=0).float()
         return (final_tensor,)
 
     def get_dominant_edge_color(self, image):

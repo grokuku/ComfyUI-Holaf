@@ -1,6 +1,6 @@
 # nodes/holaf_bundle_extractor.py
 
-from .holaf_utils import AnyType
+from .holaf_utils import ANY_TYPE
 
 
 class HolafBundleExtractor:
@@ -15,8 +15,8 @@ class HolafBundleExtractor:
             }
         }
     
-    # We use AnyType("*") for all 20 outputs so they can connect to anything (IMAGE, MODEL, etc.)
-    RETURN_TYPES = tuple([AnyType("*")] * 20)
+    # We use ANY_TYPE for all 20 outputs so they can connect to anything (IMAGE, MODEL, etc.)
+    RETURN_TYPES = tuple([ANY_TYPE] * 20)
     
     # Names corresponding to the creator inputs for clarity
     RETURN_NAMES = tuple([f"output_{i:02}" for i in range(1, 21)])

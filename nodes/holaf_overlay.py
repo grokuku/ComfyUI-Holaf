@@ -15,7 +15,12 @@
 
 import torch
 import numpy as np
+import logging
 from PIL import Image, ImageOps, ImageChops
+
+from .holaf_utils import tensor_to_pil, pil_to_tensor
+
+logger = logging.getLogger("Holaf.Overlay")
 
 class HolafOverlayNode:
     """
@@ -43,50 +48,6 @@ class HolafOverlayNode:
     FUNCTION = "overlay"
     CATEGORY = "Holaf"
 
-    def tensor_to_pil(self, tensor):
-        """Convert a ComfyUI image tensor (BHWC float [0,1]) to a PIL Image."""
-        if not isinstance(tensor, torch.Tensor):
-            raise TypeError(f"Input must be a torch.Tensor, got {type(tensor)}")
-        if tensor.numel() == 0:
-            return Image.new('RGB', (1, 1), color='black')
-
-        # PyTorch SIMD conversion (avoids numpy float64 promotion)
-        image_np = tensor.cpu().float().mul(255).clamp(0, 255).byte().numpy()
-
-        if image_np.ndim == 3 and image_np.shape[2] in [1, 3, 4]:
-            # Ambiguous case: both shape[0] and shape[2] could be channels.
-            # ComfyUI always uses HWC, so we prefer that interpretation, but
-            # warn when the tensor is small enough to be genuinely ambiguous.
-            if image_np.shape[0] in [1, 3, 4] and image_np.shape[1] <= 4:
-                print(f"[Holaf] Warning: ambiguous tensor shape {image_np.shape} "
-                      f"(both H and C look like channel counts). Assuming HWC "
-                      f"(ComfyUI convention). If this is wrong, pre-squeeze your tensor.")
-            pass  # Already HWC
-        elif image_np.ndim == 3 and image_np.shape[0] in [1, 3, 4]:
-            image_np = np.transpose(image_np, (1, 2, 0))  # CHW to HWC
-        elif image_np.ndim == 0:
-            return Image.new('RGB', (1, 1), color='black')
-
-        if image_np.ndim == 3 and image_np.shape[2] == 1:
-            image_np = image_np.squeeze(axis=2)
-
-        try:
-            return Image.fromarray(image_np)
-        except Exception as e:
-            print(f"Error creating PIL Image (shape: {image_np.shape}, dtype: {image_np.dtype}): {e}")
-            return Image.new('RGB', (1, 1), color='red')
-
-    def pil_to_tensor(self, image):
-        """Converts a PIL Image to a batched tensor in BHWC format [0,1]."""
-        image_np = np.array(image).astype(np.float32) / 255.0
-        if image.mode == 'RGBA' and image_np.shape[-1] == 3:
-            alpha_channel = np.ones_like(image_np[..., :1])
-            image_np = np.concatenate((image_np, alpha_channel), axis=-1)
-        elif image_np.ndim == 2:
-            image_np = np.stack((image_np,)*3, axis=-1)
-
-        return torch.from_numpy(image_np).unsqueeze(0)  # (1, H, W, C) = BHWC
-
     def overlay(self, background_image, overlay_image, horizontal_align, vertical_align, offset_percent, size_percent, opacity, mask=None):
         if not isinstance(background_image, torch.Tensor) or not isinstance(overlay_image, torch.Tensor):
             raise TypeError("Inputs must be torch.Tensor")
@@ -106,13 +67,13 @@ class HolafOverlayNode:
                 batch_size = batch_size_ov
             else:
                 batch_size = min(batch_size_bg, batch_size_ov)
-                print(f"[Holaf] Warning: batch size mismatch between background ({batch_size_bg}) and overlay ({batch_size_ov}). "
+                logger.warning(f"Batch size mismatch between background ({batch_size_bg}) and overlay ({batch_size_ov}). "
                       f"Only the first {batch_size} frame(s) will be processed; the remaining frames are silently discarded.")
 
         results = []
         for i in range(batch_size):
-            bg_pil = self.tensor_to_pil(background_image[i]).convert("RGBA")
-            ov_pil = self.tensor_to_pil(overlay_image[i]).convert("RGBA")
+            bg_pil = tensor_to_pil(background_image[i]).convert("RGBA")
+            ov_pil = tensor_to_pil(overlay_image[i]).convert("RGBA")
             bg_width, bg_height = bg_pil.size
             ov_orig_width, ov_orig_height = ov_pil.size
 
@@ -171,7 +132,7 @@ class HolafOverlayNode:
             final_mask = ImageChops.multiply(base_mask_pil, ov_pil.split()[3])
             result_pil.paste(ov_pil, (paste_x, paste_y), final_mask)
             
-            results.append(self.pil_to_tensor(result_pil))
+            results.append(pil_to_tensor(result_pil))
 
         if not results:
             return (background_image,)

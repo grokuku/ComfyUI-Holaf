@@ -22,7 +22,8 @@ This node uses the HuggingFace ``diffusers`` pipeline under the hood.
 Features
 --------
 - Auto-downloads the model on first use (~80 GB)
-- Stores model files locally in its own folder (easy to cleanup)
+- Configurable model directory (env var ``HOLAF_NUCLEUS_MODEL_DIR``,
+  ComfyUI ``models/`` folder, or legacy ``nucleus_image_model/``)
 - Negative prompt support
 - Text KV caching for faster inference
 - ComfyUI progress bar integration
@@ -52,10 +53,61 @@ logger = logging.getLogger("Holaf.NucleusImage")
 
 MODEL_REPO_ID = "NucleusAI/Nucleus-Image"
 
-# All model files are stored next to this script for easy cleanup.
+# All model files used to be stored next to this script for easy cleanup.
 # To fully remove the model, simply delete the ``nucleus_image_model/`` folder.
+# The directory is now configurable (see ``_resolve_model_dir`` below).
 NODE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR = os.path.join(NODE_DIR, "nucleus_image_model")
+
+
+def _resolve_model_dir() -> str:
+    """Determine where the Nucleus-Image model files should live.
+
+    Resolution order (first match wins):
+      1. ``HOLAF_NUCLEUS_MODEL_DIR`` environment variable.
+      2. *Backward-compat* — if the model is already present in the legacy
+         ``nucleus_image_model/`` folder next to this script, keep using it
+         so existing installations are not broken.
+      3. ComfyUI's ``models`` directory (via ``folder_paths``), in a dedicated
+         ``nucleus_image`` sub-folder.
+      4. Legacy ``nucleus_image_model/`` folder next to this script
+         (used for fresh downloads when ComfyUI's ``folder_paths`` is not
+         available).
+    """
+    legacy_dir = os.path.join(NODE_DIR, "nucleus_image_model")
+
+    # 1. Explicit environment variable -------------------------------------
+    env_dir = os.environ.get("HOLAF_NUCLEUS_MODEL_DIR", "").strip()
+    if env_dir:
+        resolved = os.path.abspath(env_dir)
+        logger.info("[Nucleus-Image] MODEL_DIR from HOLAF_NUCLEUS_MODEL_DIR: %s", resolved)
+        return resolved
+
+    # 2. Backward-compat — model already in the legacy folder ---------------
+    if os.path.isfile(os.path.join(legacy_dir, "model_index.json")):
+        logger.info("[Nucleus-Image] MODEL_DIR (legacy, model present): %s", legacy_dir)
+        return legacy_dir
+
+    # 3. ComfyUI models directory ------------------------------------------
+    try:
+        import folder_paths
+        for folder_name in ("diffusers_models", "checkpoints"):
+            paths = folder_paths.get_folder_paths(folder_name)
+            if paths:
+                # Use the parent ``models/`` directory with a dedicated
+                # ``nucleus_image`` sub-folder for a clean layout.
+                models_base = os.path.dirname(os.path.abspath(paths[0]))
+                resolved = os.path.join(models_base, "nucleus_image")
+                logger.info("[Nucleus-Image] MODEL_DIR from ComfyUI models: %s", resolved)
+                return resolved
+    except Exception:
+        pass
+
+    # 4. Last resort — legacy folder ----------------------------------------
+    logger.info("[Nucleus-Image] MODEL_DIR (legacy fallback): %s", legacy_dir)
+    return legacy_dir
+
+
+MODEL_DIR = _resolve_model_dir()
 
 # Module-level pipeline cache — survives across node invocations within the
 # same process so the model is only loaded once. Thread-safe via _cache_lock.
@@ -208,7 +260,9 @@ class HolafNucleusImage:
 
     A 17B sparse MoE diffusion transformer (~2B active per forward pass).
     This is a standalone "black box" node — it auto-downloads the model on
-    first use and stores all files in its own directory for easy cleanup.
+    first use. The model directory is configurable via the
+    ``HOLAF_NUCLEUS_MODEL_DIR`` environment variable or ComfyUI's ``models``
+    folder; see ``_resolve_model_dir`` for the full resolution order.
     """
 
     @classmethod

@@ -25,6 +25,7 @@ import numpy as np
 from PIL import Image
 import folder_paths
 import av
+from .holaf_utils import validate_base_path, validate_subfolder
 
 logger = logging.getLogger("Holaf.SaveMedia")
 
@@ -52,7 +53,7 @@ class HolafSaveMedia:
                 "temp_dir": ("STRING", {"default": ""}),
 
                 "--- IMAGE FORMAT ---": (["-----------------"],),
-                "image_format": (["png", "jpg", "jpeg", "webp"], {"default": "png"}),
+                "image_format": (["png", "jpg", "webp"], {"default": "png"}),
                 "image_compression": ("INT", {"default": 4, "min": 1, "max": 9, "step": 1}), # PNG comp
                 "image_quality": ("INT", {"default": 90, "min": 1, "max": 100, "step": 1}),  # JPG/WEBP
 
@@ -85,28 +86,21 @@ class HolafSaveMedia:
 
     @staticmethod
     def _validate_output_path(base_path, allowed_base=None):
-        """Prevent path traversal by ensuring the resolved path stays within allowed_base."""
-        if allowed_base is None:
-            allowed_base = folder_paths.get_output_directory()
-        abs_base = os.path.abspath(os.path.expanduser(base_path))
-        abs_allowed = os.path.abspath(allowed_base)
-        if not (abs_base == abs_allowed or abs_base.startswith(abs_allowed + os.sep)):
-            logger.warning(f"base_path '{base_path}' resolves outside allowed directory '{allowed_base}'. Falling back.")
-            return allowed_base
-        return base_path
+        """Prevent path traversal by ensuring the resolved path stays within allowed_base.
+
+        Delegates to :func:`holaf_utils.validate_base_path` for the canonical
+        implementation. Kept for backward compatibility.
+        """
+        return validate_base_path(base_path, allowed_base)
 
     @staticmethod
     def _validate_subfolder(base_path, subfolder, allowed_base=None):
-        """Prevent path traversal via subfolder by ensuring the full resolved path stays within allowed_base."""
-        if allowed_base is None:
-            allowed_base = folder_paths.get_output_directory()
-        abs_allowed = os.path.abspath(allowed_base)
-        full_path = os.path.join(base_path, subfolder)
-        abs_full = os.path.abspath(full_path)
-        if not (abs_full == abs_allowed or abs_full.startswith(abs_allowed + os.sep)):
-            logger.warning(f"subfolder '{subfolder}' resolves outside allowed directory '{allowed_base}'. Discarding subfolder.")
-            return ""
-        return subfolder
+        """Prevent path traversal via subfolder by ensuring the full resolved path stays within allowed_base.
+
+        Delegates to :func:`holaf_utils.validate_subfolder` for the canonical
+        implementation. Kept for backward compatibility.
+        """
+        return validate_subfolder(base_path, subfolder, allowed_base)
 
     def get_unique_filepath(self, directory, base_filename, ext):
         filepath = os.path.join(directory, f"{base_filename}{ext}")
@@ -115,6 +109,52 @@ class HolafSaveMedia:
             filepath = os.path.join(directory, f"{base_filename}_{counter:04d}{ext}")
             counter += 1
         return filepath, os.path.basename(filepath)
+
+    def _prepare_output_paths(self, output_path, base_name_str, ext):
+        """Resolve a unique output filepath and derive the base name.
+        Returns (file_path, final_filename, base_name)."""
+        file_path, final_filename = self.get_unique_filepath(output_path, base_name_str, ext)
+        base_name = os.path.splitext(final_filename)[0]
+        return file_path, final_filename, base_name
+
+    def _create_temp_file(self, temp_dir, ext, prefix, output_path, formatted_filename_base, ts, log_temp_dir=True):
+        """Create a temp file and resolve the final output path.
+        Returns (temp_path, final_path, final_filename, base_name).
+        If temp creation fails, writes directly to output (temp_path == final_path)."""
+        try:
+            tmp_fd, temp_path = tempfile.mkstemp(suffix=ext, prefix=prefix, dir=temp_dir)
+            os.close(tmp_fd)
+        except Exception as e:
+            if log_temp_dir:
+                logger.warning(f"{ts()} Temp file FAILED ({temp_dir}): {e}. Writing directly to output.")
+            else:
+                logger.warning(f"{ts()} Temp file FAILED: {e}. Writing directly.")
+            final_path, final_filename, base_name = self._prepare_output_paths(output_path, formatted_filename_base, ext)
+            return final_path, final_path, final_filename, base_name
+        final_path, final_filename, base_name = self._prepare_output_paths(output_path, formatted_filename_base, ext)
+        return temp_path, final_path, final_filename, base_name
+
+    @staticmethod
+    def _safe_move(temp_path, final_path, ts):
+        """Move temp file to final destination, logging the transfer.
+        Only moves if temp_path != final_path."""
+        if temp_path != final_path:
+            t0 = time.time()
+            try:
+                os.rename(temp_path, final_path)
+            except OSError:
+                shutil.move(temp_path, final_path)
+            mb = os.path.getsize(final_path) / (1024 * 1024)
+            logger.info(f"{ts()} File transfer: {mb:.1f} MB in {time.time()-t0:.2f}s")
+
+    @staticmethod
+    def _cleanup_temp(temp_path, final_path):
+        """Remove a leftover temp file if it differs from the final path."""
+        if temp_path and temp_path != final_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
     def _save_metadata(self, output_path, base_name, prompt, save_prompt, save_workflow, prompt_hidden, extra_pnginfo):
         workflow_json = ""
@@ -126,7 +166,7 @@ class HolafSaveMedia:
                 with open(prompt_path, 'w', encoding='utf-8') as f:
                     f.write(prompt)
             except Exception as e:
-                logger.info(f"Error saving prompt: {e}")
+                logger.error(f"Error saving prompt: {e}")
 
         # Save Workflow
         # Only use the actual workflow graph from extra_pnginfo.
@@ -145,7 +185,7 @@ class HolafSaveMedia:
         else:
             workflow_json = ""
             if save_workflow:
-                logger.info("Workflow not available in extra_pnginfo; skipping workflow JSON save.")
+                logger.warning("Workflow not available in extra_pnginfo; skipping workflow JSON save.")
 
         if save_workflow and workflow_json:
             workflow_path = os.path.join(output_path, f"{base_name}.json")
@@ -153,7 +193,7 @@ class HolafSaveMedia:
                 with open(workflow_path, 'w', encoding='utf-8') as f:
                     f.write(workflow_json)
             except Exception as e:
-                logger.info(f"Error saving workflow: {e}")
+                logger.error(f"Error saving workflow: {e}")
 
         return workflow_json
 
@@ -242,12 +282,12 @@ class HolafSaveMedia:
 
         if codec_opt in ("h264_nvenc", "hevc_nvenc"):
             if container != "mp4":
-                logger.info(f"NVENC only works with MP4 container, falling back to auto for {container}.")
+                logger.warning(f"NVENC only works with MP4 container, falling back to auto for {container}.")
                 return self._resolve_video_codec(container, "auto")
             if self._is_codec_available(codec_opt):
                 return codec_opt
             fallback = "libx264" if codec_opt == "h264_nvenc" else "libx265"
-            logger.info(f"{codec_opt} not available in PyAV, falling back to {fallback}.")
+            logger.warning(f"{codec_opt} not available in PyAV, falling back to {fallback}.")
             return fallback
 
         if container == "mp4":
@@ -311,7 +351,7 @@ class HolafSaveMedia:
                 logger.warning(f"{ts()} temp_dir '{temp_dir}' resolves outside allowed directories; ignoring and auto-detecting.")
                 temp_dir = self._detect_temp_dir()
             elif not (os.path.isdir(temp_dir) and os.access(temp_dir, os.W_OK)):
-                logger.info(f"{ts()} temp_dir '{temp_dir}' not writable, auto-detecting.")
+                logger.warning(f"{ts()} temp_dir '{temp_dir}' not writable, auto-detecting.")
                 temp_dir = self._detect_temp_dir()
         else:
             temp_dir = self._detect_temp_dir()
@@ -320,12 +360,15 @@ class HolafSaveMedia:
         # 3. ROUTING LOGIC
         if mode == "image":
             if image_tensor is None:
-                logger.info(f"{ts()} Warning: Mode is 'image' but no image provided.")
+                logger.warning(f"{ts()} Warning: Mode is 'image' but no image provided.")
                 image_tensor = torch.zeros((1, 8, 8, 3))
                 return {"ui": {"text": ["No image provided"]}, "result": (image_tensor, audio_data, "", "", "")}
 
             t0 = time.time()
             img_format = kwargs.get("image_format", "png")
+            # Normalise legacy "jpeg" to "jpg" so old workflows still work
+            if img_format == "jpeg":
+                img_format = "jpg"
             ext = f".{img_format}"
             img_cpu = image_tensor.cpu()
             img_array = img_cpu.float().mul(255).clamp(0, 255).byte().numpy()
@@ -338,9 +381,7 @@ class HolafSaveMedia:
             total = img_array.shape[0]
             for i in range(total):
                 t_img = time.time()
-                file_path, final_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
-                base_name = os.path.splitext(final_filename)[0]
-                final_path = file_path
+                file_path, final_filename, base_name = self._prepare_output_paths(output_path, formatted_filename_base, ext)
 
                 img = Image.fromarray(img_array[i])
                 try:
@@ -349,9 +390,12 @@ class HolafSaveMedia:
                     else:
                         img.save(file_path, quality=kwargs.get("image_quality", 90))
 
+                    # Only update final_path after a successful save so we
+                    # never return a path to a file that doesn't exist (A14).
+                    final_path = file_path
                     results.append({"filename": final_filename, "subfolder": formatted_subfolder, "type": self.type})
                 except Exception as e:
-                     logger.info(f"{ts()} Error saving image {i}: {e}")
+                     logger.error(f"{ts()} Error saving image {i}: {e}")
 
                 if i == 0:
                     workflow_json = self._save_metadata(output_path, base_name, prompt, save_prompt, save_workflow, prompt_hidden, extra_pnginfo)
@@ -366,7 +410,7 @@ class HolafSaveMedia:
 
         elif mode == "video":
             if image_tensor is None:
-                logger.info(f"{ts()} Warning: Mode is 'video' but no image provided.")
+                logger.warning(f"{ts()} Warning: Mode is 'video' but no image provided.")
                 image_tensor = torch.zeros((1, 8, 8, 3))
                 return {"ui": {"text": ["No image provided"]}, "result": (image_tensor, audio_data, "", "", "")}
 
@@ -398,18 +442,10 @@ class HolafSaveMedia:
             temp_video_path = None
             video_path = None
             try:
-                try:
-                    tmp_fd, temp_video_path = tempfile.mkstemp(suffix=ext, prefix='holaf_video_', dir=temp_dir)
-                    os.close(tmp_fd)
+                temp_video_path, video_path, final_video_filename, base_name = self._create_temp_file(
+                    temp_dir, ext, 'holaf_video_', output_path, formatted_filename_base, ts, log_temp_dir=True)
+                if temp_video_path != video_path:
                     logger.info(f"{ts()} Temp file: {temp_video_path}")
-                except Exception as e:
-                    logger.warning(f"{ts()} Temp file FAILED ({temp_dir}): {e}. Writing directly to output.")
-                    video_path, final_video_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
-                    temp_video_path = video_path
-                else:
-                    video_path, final_video_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
-
-                base_name = os.path.splitext(final_video_filename)[0]
 
                 # --- OPEN CONTAINER ---
                 t0 = time.time()
@@ -417,7 +453,7 @@ class HolafSaveMedia:
                     container = av.open(temp_video_path, mode='w')
                 except Exception as e:
                     if is_nvenc:
-                        logger.info(f"{ts()} NVENC open FAILED: {e}. Fallback to CPU.")
+                        logger.warning(f"{ts()} NVENC open FAILED: {e}. Fallback to CPU.")
                         v_codec = "libx264" if v_container == "mp4" else "libvpx-vp9"
                         is_nvenc = False
                         enc_type = "CPU"
@@ -498,14 +534,7 @@ class HolafSaveMedia:
                 logger.info(f"{ts()} Container close: {time.time()-t0:.2f}s")
 
                 # --- MOVE FROM TEMP TO FINAL ---
-                if temp_video_path != video_path:
-                    t0 = time.time()
-                    try:
-                        os.rename(temp_video_path, video_path)
-                    except OSError:
-                        shutil.move(temp_video_path, video_path)
-                    mb = os.path.getsize(video_path) / (1024*1024)
-                    logger.info(f"{ts()} File transfer: {mb:.1f} MB in {time.time()-t0:.2f}s")
+                self._safe_move(temp_video_path, video_path, ts)
 
                 # --- SAVE METADATA ---
                 t0 = time.time()
@@ -517,17 +546,13 @@ class HolafSaveMedia:
                 results = [{"filename": final_video_filename, "subfolder": formatted_subfolder, "type": self.type}]
                 ui_key = "gifs" if v_container == "gif" else "videos"
             finally:
-                if temp_video_path and temp_video_path != video_path and os.path.exists(temp_video_path):
-                    try:
-                        os.unlink(temp_video_path)
-                    except OSError:
-                        pass
+                self._cleanup_temp(temp_video_path, video_path)
             return {"ui": {ui_key: results}, "result": (image_tensor, audio_data, video_path, prompt, workflow_json)}
 
 
         elif mode == "audio":
             if audio_data is None:
-                logger.info(f"{ts()} Warning: Mode is 'audio' but no audio provided.")
+                logger.warning(f"{ts()} Warning: Mode is 'audio' but no audio provided.")
                 return {"ui": {"text": ["No audio provided"]}, "result": (image_tensor, audio_data, "", "", "")}
 
             a_format = kwargs.get("audio_format", "wav")
@@ -551,17 +576,8 @@ class HolafSaveMedia:
 
             if audio_np is not None and audio_np.size > 0:
                 try:
-                    try:
-                        tmp_fd, temp_audio_path = tempfile.mkstemp(suffix=ext, prefix='holaf_audio_', dir=temp_dir)
-                        os.close(tmp_fd)
-                    except Exception as e:
-                        logger.warning(f"{ts()} Temp file FAILED: {e}. Writing directly.")
-                        audio_path, final_audio_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
-                        temp_audio_path = audio_path
-                    else:
-                        audio_path, final_audio_filename = self.get_unique_filepath(output_path, formatted_filename_base, ext)
-
-                    base_name = os.path.splitext(final_audio_filename)[0]
+                    temp_audio_path, audio_path, final_audio_filename, base_name = self._create_temp_file(
+                        temp_dir, ext, 'holaf_audio_', output_path, formatted_filename_base, ts, log_temp_dir=False)
 
                     t0 = time.time()
                     container = av.open(temp_audio_path, mode='w')
@@ -582,20 +598,9 @@ class HolafSaveMedia:
                     container.close()
                     logger.info(f"{ts()} Audio encode: {time.time()-t0:.2f}s")
 
-                    if temp_audio_path != audio_path:
-                        t0 = time.time()
-                        try:
-                            os.rename(temp_audio_path, audio_path)
-                        except OSError:
-                            shutil.move(temp_audio_path, audio_path)
-                        mb = os.path.getsize(audio_path) / (1024*1024)
-                        logger.info(f"{ts()} File transfer: {mb:.1f} MB in {time.time()-t0:.2f}s")
+                    self._safe_move(temp_audio_path, audio_path, ts)
                 finally:
-                    if temp_audio_path and temp_audio_path != audio_path and os.path.exists(temp_audio_path):
-                        try:
-                            os.unlink(temp_audio_path)
-                        except OSError:
-                            pass
+                    self._cleanup_temp(temp_audio_path, audio_path)
             else:
                 audio_path = ""
                 final_audio_filename = ""

@@ -1,4 +1,4 @@
-from .holaf_utils import AnyType
+from .holaf_utils import ANY_TYPE
 
 
 class HolafAutoSelectX2:
@@ -7,16 +7,15 @@ class HolafAutoSelectX2:
 
     @classmethod
     def INPUT_TYPES(s):
-        any_type = AnyType("*")
         return {
             "required": {},
             "optional": {
-                "input_1": (any_type,),
-                "input_2": (any_type,),
+                "input_1": (ANY_TYPE,),
+                "input_2": (ANY_TYPE,),
             }
         }
 
-    RETURN_TYPES = (AnyType("*"),)
+    RETURN_TYPES = (ANY_TYPE,)
     RETURN_NAMES = ("selected",)
     FUNCTION = "select"
     CATEGORY = "Holaf Custom Nodes/Flow Control"

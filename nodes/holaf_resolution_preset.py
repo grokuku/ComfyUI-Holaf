@@ -16,7 +16,10 @@
 import math
 import sys
 import random
+import logging
 import torch
+
+logger = logging.getLogger("Holaf.ResolutionPreset")
 
 # Maps user-friendly names to their float values for the UI dropdown.
 ASPECT_RATIOS = {
@@ -248,7 +251,7 @@ class HolafResolutionPreset:
                 # Find the aspect ratio name in ASPECT_RATIOS that is closest to image_ratio
                 closest_ratio_name = min(ASPECT_RATIOS.keys(), key=lambda name: abs(ASPECT_RATIOS[name] - image_ratio))
                 target_ratio_name = closest_ratio_name
-                print(f"[HolafResolutionPreset] Detected image ratio ~{image_ratio:.2f}. Matched to '{target_ratio_name}'.")
+                logger.info(f"Detected image ratio ~{image_ratio:.2f}. Matched to '{target_ratio_name}'.")
 
         # Handle random selection
         if target_ratio_name == "Random":
@@ -257,10 +260,10 @@ class HolafResolutionPreset:
         # The core of the new logic: a direct lookup.
         # Fallback to 1:1 if the ratio name is somehow invalid.
         if target_ratio_name not in MASTER_RESOLUTIONS[model_type]:
-            print(f"[HolafResolutionPreset] Warning: Ratio '{target_ratio_name}' not found for model '{model_type}'. Defaulting to 1:1.")
+            logger.warning(f"Ratio '{target_ratio_name}' not found for model '{model_type}'. Defaulting to 1:1.")
             target_ratio_name = "1:1 Square (Instagram-Medium Format)"
 
         width, height = MASTER_RESOLUTIONS[model_type][target_ratio_name]
 
-        print(f"[HolafResolutionPreset] Selected: {model_type} @ {target_ratio_name}. Resolution: {width}x{height}")
+        logger.info(f"Selected: {model_type} @ {target_ratio_name}. Resolution: {width}x{height}")
         return (width, height)

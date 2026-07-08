@@ -18,6 +18,8 @@ import torch
 import numpy as np
 from PIL import Image
 
+from .holaf_utils import tensor_to_pil, pil_to_tensor
+
 class HolafLutGenerator:
     """
     Generates a 3D Look-Up Table (LUT) from input images.
@@ -54,29 +56,6 @@ class HolafLutGenerator:
     RETURN_NAMES = ("holaf_lut_data", "reference_image", "neutral_image_out",)
     FUNCTION = "generate_lut"
     CATEGORY = "Holaf/LUT"
-
-    def tensor_to_pil(self, tensor: torch.Tensor) -> Image.Image:
-        if tensor.ndim == 4:
-            tensor = tensor[0]
-        image_np = tensor.cpu().float().mul(255).clamp(0, 255).byte().numpy()
-        if image_np.ndim == 3:
-            if image_np.shape[2] == 1:
-                # Grayscale: replicate single channel to RGB
-                image_np = np.repeat(image_np, 3, axis=2)
-                mode = 'RGB'
-            elif image_np.shape[2] == 3:
-                mode = 'RGB'
-            elif image_np.shape[2] == 4:
-                mode = 'RGBA'
-            else:
-                raise ValueError(f"Unsupported channel count: {image_np.shape[2]}")
-        else:
-            raise ValueError(f"Expected 3D array (H,W,C), got shape {image_np.shape}")
-        return Image.fromarray(image_np, mode)
-
-    def pil_to_tensor(self, image: Image.Image) -> torch.Tensor:
-        image_np = np.array(image).astype(np.float32) / 255.0
-        return torch.from_numpy(image_np).unsqueeze(0)
 
     def _generate_hald_clut_image(self, size: int) -> Image.Image:
         """Generates a neutral identity LUT image (HALD CLUT) using vectorized numpy."""
@@ -128,14 +107,14 @@ class HolafLutGenerator:
 
     def generate_lut(self, reference_image: torch.Tensor, lut_size: int, title: str, neutral_image: torch.Tensor = None):
         """Generates the 3D LUT data based on the provided inputs and selected mode."""
-        graded_pil = self.tensor_to_pil(reference_image[0]).convert("RGB")
+        graded_pil = tensor_to_pil(reference_image[0]).convert("RGB")
         final_lut_np = np.zeros((lut_size, lut_size, lut_size, 3), dtype=np.float32)
         neutral_image_for_output = None
 
         if neutral_image is not None:
             # --- DIFFERENCE MODE ---
             # Calculates the transformation from neutral_image to reference_image.
-            neutral_pil = self.tensor_to_pil(neutral_image[0]).convert("RGB")
+            neutral_pil = tensor_to_pil(neutral_image[0]).convert("RGB")
             
             # Ensure images have same dimensions for a 1:1 pixel comparison.
             if graded_pil.size != neutral_pil.size:
@@ -151,10 +130,32 @@ class HolafLutGenerator:
             indices = (np.rint(neutral_pixels * scale).clip(0, lut_size - 1)).astype(np.int32)
             values = graded_pixels / 255.0
 
-            # Accumulate values and counts per LUT cell
-            np.add.at(final_lut_np, (indices[:, 2], indices[:, 1], indices[:, 0]), values)
-            count_np = np.zeros((lut_size, lut_size, lut_size), dtype=np.float32)
-            np.add.at(count_np, (indices[:, 2], indices[:, 1], indices[:, 0]), 1.0)
+            # Accumulate values and counts per LUT cell using np.bincount (vectorized).
+            # np.add.at is notoriously slow because it is not truly vectorized;
+            # np.bincount with flattened linear indices is much faster for large images.
+            #
+            # The LUT array final_lut_np has shape (lut_size, lut_size, lut_size, 3)
+            # and is indexed as [B, G, R, channel] (B = axis 0, G = axis 1, R = axis 2).
+            # indices columns are [R, G, B] (standard RGB pixel ordering).
+            b_idx = indices[:, 2]
+            g_idx = indices[:, 1]
+            r_idx = indices[:, 0]
+
+            # Compute a flat cell index for each pixel: cell = b*S*S + g*S + r
+            cell_idx = (b_idx * (lut_size * lut_size) + g_idx * lut_size + r_idx).astype(np.int64)
+
+            # --- Accumulate per-channel values via bincount ---
+            # Build flat indices into the raveled (lut_size, lut_size, lut_size, 3) array.
+            # Each cell occupies 3 consecutive elements (one per RGB channel).
+            flat_idx = (cell_idx[:, np.newaxis] * 3 + np.arange(3, dtype=np.int64)).ravel()
+            flat_values = values.ravel().astype(np.float64)
+            total_flat = lut_size * lut_size * lut_size * 3
+            final_lut_np = np.bincount(flat_idx, weights=flat_values, minlength=total_flat)
+            final_lut_np = final_lut_np.reshape(lut_size, lut_size, lut_size, 3).astype(np.float32)
+
+            # --- Accumulate counts per cell via bincount (one count per cell, not per channel) ---
+            count_np = np.bincount(cell_idx, minlength=lut_size * lut_size * lut_size)
+            count_np = count_np.reshape(lut_size, lut_size, lut_size).astype(np.float32)
 
             # Average (avoid division by zero)
             count_4d = count_np[..., np.newaxis]
@@ -176,18 +177,28 @@ class HolafLutGenerator:
             modified_lut_pil = Image.fromarray(color_matched_np, 'RGB')
             
             # 3. Reconstruct the 3D LUT array by reading pixel values from the modified HALD image.
+            # Vectorized reconstruction of the 3D LUT from the modified HALD image.
+            # Instead of a triple Python for-loop (lut_size^3 iterations, up to ~2M for
+            # lut_size=128), we build coordinate arrays with np.meshgrid and use advanced
+            # indexing to read all pixels in a single vectorized operation.
             dim = modified_lut_pil.width
             grid_size = int(round(dim / lut_size))
             modified_np = np.array(modified_lut_pil)
-            for b_idx in range(lut_size):
-                for g_idx in range(lut_size):
-                    for r_idx in range(lut_size):
-                        x = (b_idx % grid_size) * lut_size + r_idx
-                        y = (b_idx // grid_size) * lut_size + g_idx
-                        if x < dim and y < modified_lut_pil.height:
-                            final_lut_np[b_idx, g_idx, r_idx] = modified_np[y, x].astype(np.float32) / 255.0
 
-            neutral_image_for_output = self.pil_to_tensor(neutral_pil)
+            # Build 3D index grids: b along axis 0, g along axis 1, r along axis 2
+            b_grid, g_grid, r_grid = np.meshgrid(
+                np.arange(lut_size), np.arange(lut_size), np.arange(lut_size), indexing='ij'
+            )
+            # Map 3D LUT coordinates to 2D HALD image coordinates (same formula as the loop)
+            x = (b_grid % grid_size) * lut_size + r_grid
+            y = (b_grid // grid_size) * lut_size + g_grid
+
+            # Only read pixels that fall within the HALD image bounds
+            valid = (x < dim) & (y < modified_lut_pil.height)
+            final_lut_np[b_grid[valid], g_grid[valid], r_grid[valid]] = \
+                modified_np[y[valid], x[valid]].astype(np.float32) / 255.0
+
+            neutral_image_for_output = pil_to_tensor(neutral_pil)
         
         # Package the final LUT array, size, and title into a dictionary for output.
         holaf_lut_data = {

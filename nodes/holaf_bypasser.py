@@ -1,8 +1,6 @@
 import torch
 
-from .holaf_utils import AnyType
-
-ANY_TYPE = AnyType("*")
+from .holaf_utils import ANY_TYPE
 
 class HolafBypasser:
     def __init__(self):

@@ -16,31 +16,27 @@
 import numpy as np
 import os
 import datetime
+import logging
 import folder_paths
 
+logger = logging.getLogger("Holaf.LutSaver")
+from .holaf_utils import validate_base_path, validate_subfolder
+
 def _validate_lut_path(base_path, allowed_base=None):
-    """Prevent path traversal by ensuring resolved path stays within allowed_base."""
-    if allowed_base is None:
-        allowed_base = folder_paths.get_output_directory()
-    abs_base = os.path.abspath(os.path.expanduser(base_path))
-    abs_allowed = os.path.abspath(allowed_base)
-    if not (abs_base == abs_allowed or abs_base.startswith(abs_allowed + os.sep)):
-        return allowed_base
-    return base_path
+    """Prevent path traversal by ensuring resolved path stays within allowed_base.
+
+    Delegates to :func:`holaf_utils.validate_base_path` for the canonical
+    implementation. Kept for backward compatibility.
+    """
+    return validate_base_path(base_path, allowed_base)
 
 def _validate_lut_subfolder(base_path, subfolder, allowed_base=None):
-    """Prevent path traversal via subfolder by ensuring the full resolved path stays within allowed_base."""
-    import logging
-    logger = logging.getLogger("Holaf.LutSaver")
-    if allowed_base is None:
-        allowed_base = folder_paths.get_output_directory()
-    abs_allowed = os.path.abspath(allowed_base)
-    full_path = os.path.join(base_path, subfolder)
-    abs_full = os.path.abspath(full_path)
-    if not (abs_full == abs_allowed or abs_full.startswith(abs_allowed + os.sep)):
-        logger.warning(f"subfolder '{subfolder}' resolves outside allowed directory '{allowed_base}'. Discarding subfolder.")
-        return ""
-    return subfolder
+    """Prevent path traversal via subfolder by ensuring the full resolved path stays within allowed_base.
+
+    Delegates to :func:`holaf_utils.validate_subfolder` for the canonical
+    implementation. Kept for backward compatibility.
+    """
+    return validate_subfolder(base_path, subfolder, allowed_base)
 
 class HolafLutSaver:
     """
@@ -92,7 +88,7 @@ class HolafLutSaver:
         """
         # First, validate the incoming LUT data to ensure it has the required structure and content.
         if not isinstance(holaf_lut_data, dict) or not all(k in holaf_lut_data for k in ['lut', 'size']):
-            print("[HolafLutSaver] Error: Invalid HOLAF_LUT_DATA input.")
+            logger.error("Invalid HOLAF_LUT_DATA input.")
             return {}
 
         lut_np = holaf_lut_data.get('lut')
@@ -100,7 +96,7 @@ class HolafLutSaver:
         title = holaf_lut_data.get('title', 'Untitled Holaf LUT')
 
         if not isinstance(lut_np, np.ndarray) or not isinstance(size, int) or size == 0:
-            print("[HolafLutSaver] Error: Malformed HOLAF_LUT_DATA content.")
+            logger.error("Malformed HOLAF_LUT_DATA content.")
             return {}
             
         now = datetime.datetime.now()
@@ -135,7 +131,7 @@ class HolafLutSaver:
                 np.savetxt(f, lut_flat, fmt='%.6f %.6f %.6f')
             
         except Exception as e:
-            print(f"[HolafLutSaver] Error writing .cube file to {final_filepath}: {e}")
+            logger.error(f"Error writing .cube file to {final_filepath}: {e}")
             return {"ui": {"saved_luts": [{"filename": final_filename, "error": str(e)}]}}
 
         # Return a dictionary for the ComfyUI frontend to display feedback (e.g., the saved filename).

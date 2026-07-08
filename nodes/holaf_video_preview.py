@@ -1,9 +1,12 @@
 import os
 import time
 import uuid
+import logging
 import numpy as np
 import torch
 import folder_paths
+
+logger = logging.getLogger("Holaf.VideoPreview")
 
 # Gestion de la dépendance PyAV
 try:
@@ -39,7 +42,7 @@ class HolafVideoPreview:
 
     def preview_video(self, images, fps, quality):
         if av is None:
-            print("⚠️ Holaf Video Preview: PyAV ('av') not installed. Passing through images without preview.")
+            logger.warning("PyAV ('av') not installed. Passing through images without preview.")
             return (images,)
 
         # Clean up old preview files to prevent temp directory bloat.
@@ -84,7 +87,7 @@ class HolafVideoPreview:
             container.close()
 
         except Exception as e:
-            print(f"⚠️ Holaf Video Preview Error: {e}")
+            logger.error(f"Holaf Video Preview Error: {e}")
             return (images,)
 
         preview_data = {

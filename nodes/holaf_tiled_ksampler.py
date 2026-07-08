@@ -159,7 +159,7 @@ class HolafTiledKSampler:
                 ew = encoded_tile.shape[-1]
 
                 # === DEBUG: log every tile ===
-                logger.info(
+                logger.debug(
                     "  tile[%d,%d] ly=%d lx=%d py=%d:%d px=%d:%d | VAE out: %s | eh=%d ew=%d",
                     y, x, ly_start, lx_start, py_start, py_end, px_start, px_end,
                     list(encoded_tile.shape), eh, ew

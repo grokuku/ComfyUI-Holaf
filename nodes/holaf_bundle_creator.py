@@ -1,6 +1,6 @@
 # nodes/holaf_bundle_creator.py
 
-from .holaf_utils import AnyType
+from .holaf_utils import ANY_TYPE
 
 
 class HolafBundleCreator:
@@ -9,13 +9,10 @@ class HolafBundleCreator:
 
     @classmethod
     def INPUT_TYPES(s):
-        # Define the wildcard type
-        any_type = AnyType("*")
-        
         # Generate 20 optional inputs
         optional_inputs = {}
         for i in range(1, 21):
-            optional_inputs[f"input_{i:02}"] = (any_type, )
+            optional_inputs[f"input_{i:02}"] = (ANY_TYPE, )
 
         return {
             "required": {},

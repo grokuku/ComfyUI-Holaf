@@ -1,7 +1,7 @@
 import torch
 import json
 
-from .holaf_utils import AnyType
+from .holaf_utils import ANY_TYPE
 
 MAX_JSON_CHARS = 10000
 
@@ -31,12 +31,12 @@ class HolafToText:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "any_input": (AnyType("*"),),
+                "any_input": (ANY_TYPE,),
                 "display_mode": (["Auto", "Plain", "JSON", "Markdown"], {"default": "Auto"}),
             },
         }
 
-    RETURN_TYPES = (AnyType("*"), "STRING")
+    RETURN_TYPES = (ANY_TYPE, "STRING")
     RETURN_NAMES = ("original", "text")
     FUNCTION = "run"
     OUTPUT_NODE = True

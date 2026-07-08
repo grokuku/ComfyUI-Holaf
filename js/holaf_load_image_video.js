@@ -140,17 +140,23 @@ app.registerExtension({
                 };
 
                 // --- Upload via file input (bouton HTML) ---
-                const fileInputId = 'holaf_file_input_' + node.id;
-                document.querySelectorAll('input.holaf_file_input[data-node-id="' + node.id + '"]')
-                    .forEach(el => el.remove());
-                const oldFileInput = document.getElementById(fileInputId);
-                if (oldFileInput) oldFileInput.remove();
+                // On utilise un UID unique par instance de node (et non node.id)
+                // pour éviter les collisions lors du clonage : un clone peut
+                // temporairement partager le même node.id que l'original pendant
+                // la phase configure() de LiteGraph, ce qui dupliquerait le
+                // fileInputId et risquerait de supprimer l'input de l'original.
+                if (node._holaf_file_input) {
+                    node._holaf_file_input.remove();
+                    node._holaf_file_input = null;
+                }
+                const fileInputId = 'holaf_file_input_' + (node._holaf_uid || (node._holaf_uid = 'hf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)));
                 const fileInput = document.createElement("input");
                 fileInput.id = fileInputId;
                 fileInput.className = 'holaf_file_input';
-                fileInput.dataset.nodeId = node.id;
+                fileInput.dataset.holafUid = node._holaf_uid;
                 Object.assign(fileInput, { type: "file", accept: "image/*,video/*,.mkv,.avi,.mov", style: "display:none" });
                 document.body.appendChild(fileInput);
+                node._holaf_file_input = fileInput;
 
                 uploadButton.onclick = () => { fileInput.click(); };
 
@@ -167,7 +173,15 @@ app.registerExtension({
                     setTimeout(() => { if (widget.value) updatePreview(widget.value); }, 100);
                 }
                 const onRemoved = node.onRemoved;
-                node.onRemoved = function() { if (onRemoved) onRemoved.apply(this, arguments); fileInput.remove(); };
+                node.onRemoved = function() {
+                    if (onRemoved) onRemoved.apply(this, arguments);
+                    // Nettoyage via la référence stockée sur l'instance plutôt
+                    // que via un ID basé sur node.id (qui pourrait avoir changé).
+                    if (this._holaf_file_input) {
+                        this._holaf_file_input.remove();
+                        this._holaf_file_input = null;
+                    }
+                };
             };
 
             const onExecuted = nodeType.prototype.onExecuted;

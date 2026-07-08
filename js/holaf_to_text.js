@@ -8,16 +8,31 @@ app.registerExtension({
 
             // --- 1. RENDER HELPERS ---
 
+            // Security: sanitize URLs to prevent XSS via dangerous protocols.
+            // The URL is already HTML-escaped at this point, but javascript: and
+            // similar protocols contain no HTML-special chars and would pass through.
+            const sanitizeUrl = (url) => {
+                // Remove whitespace/control chars that browsers ignore when parsing protocols
+                const cleaned = url.replace(/[\s\x00-\x20]/g, '');
+                if (/^(javascript|vbscript|data|file):/i.test(cleaned)) {
+                    return "";
+                }
+                return url;
+            };
+
             const renderMarkdown = (text) => {
                 if (!text) return "";
                 
                 let html = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-                // 1. HTML escape
+                // 1. HTML escape — applied first so all user content is escaped
+                //    before any markdown processing or innerHTML injection.
+                //    Quotes are escaped too to prevent attribute breakout (e.g. in href).
                 html = html
                     .replace(/&/g, "&amp;")
                     .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;");
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;");
 
                 // 2. Code blocks (fenced) — must be before inline code
                 // NOTE: lang is already HTML-escaped above, but we use textContent via
@@ -77,7 +92,14 @@ app.registerExtension({
                 // 5. Inline elements
                 html = html
                     .replace(/\*\*(.*?)\*\*/g, '<strong style="color:#fff; font-weight:700;">$1</strong>')
-                    .replace(/`([^`]+)`/g, '<code style="background:#333; color:#ff9f89; padding:1px 4px; border-radius:3px; font-family:monospace;">$1</code>');
+                    .replace(/`([^`]+)`/g, '<code style="background:#333; color:#ff9f89; padding:1px 4px; border-radius:3px; font-family:monospace;">$1</code>')
+                    // Links — URL is already HTML-escaped; sanitize to block
+                    // javascript:, vbscript:, data:, file: protocols
+                    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
+                        const safeUrl = sanitizeUrl(url);
+                        if (!safeUrl) return linkText;
+                        return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color:#58a6ff; text-decoration:none;">${linkText}</a>`;
+                    });
 
                 // 6. Clean line breaks after block elements
                 html = html.replace(/(<\/div>|<\/h[1-3]>|<\/table>|<\/hr>)\s*\n/g, '$1');
