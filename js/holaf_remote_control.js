@@ -411,6 +411,10 @@ function holafHandlePromotedChange(subgraphNode, widgetName, newValue) {
 
         holafOnPromotedValueChange(interiorNode, newValue);
     }
+
+    // Keep the host widget label in sync after a promoted toggle (matters for
+    // the RemoteSelector, whose promoted "active_group" value is the label).
+    holafUpdatePromotedLabels(subgraphNode);
 }
 
 // Module-level: apply the promoted toggle to the interior Holaf node, mirroring
@@ -449,6 +453,80 @@ function holafOnPromotedValueChange(interiorNode, newValue) {
     }
 }
 
+// Module-level: fix the label of promoted Holaf host widgets on a SubgraphNode
+// so they display the interior node's group_name (or active group for the
+// selector) instead of the raw input name ("active"/"active_group") that
+// ComfyUI assigns during promotion (SubgraphNode._setWidget registers the
+// host widget with `label: input.label ?? subgraphInput.name`).
+function holafUpdatePromotedLabels(subgraphNode) {
+    try {
+        if (!subgraphNode || !subgraphNode.isSubgraphNode || !subgraphNode.isSubgraphNode()) return;
+        const subgraph = subgraphNode.subgraph;
+        if (!subgraph) return;
+
+        const holafTypes = [
+            HOLAF_BYPASSER_TYPE,
+            HOLAF_REMOTE_TYPE,
+            HOLAF_GROUP_BYPASSER_TYPE,
+            HOLAF_REMOTE_SELECTOR_TYPE
+        ];
+
+        for (const input of subgraphNode.inputs || []) {
+            // Only promoted inputs carry a _subgraphSlot reference.
+            if (!input._subgraphSlot) continue;
+
+            // Resolve the interior Holaf node behind this promoted input,
+            // mirroring the link resolution used in holafHandlePromotedChange.
+            let interiorNode = null;
+            for (const linkId of input._subgraphSlot.linkIds || []) {
+                const link = (typeof subgraph.getLink === "function")
+                    ? subgraph.getLink(linkId)
+                    : subgraph._links?.get(linkId);
+                if (!link) continue;
+                const node = subgraph.getNodeById(link.target_id);
+                if (node && holafTypes.includes(node.type)) {
+                    interiorNode = node;
+                    break;
+                }
+            }
+            if (!interiorNode) continue;
+
+            // Determine the label to display from the interior node.
+            let groupLabel = null;
+            if (interiorNode.type === HOLAF_REMOTE_SELECTOR_TYPE) {
+                const activeGroupWidget = interiorNode.widgets?.find(w => w.name === "active_group");
+                groupLabel = activeGroupWidget?.value || null;
+            } else {
+                const groupWidget = interiorNode.widgets?.find(w => w.name === "group_name");
+                groupLabel = groupWidget?.value || null;
+            }
+            if (!groupLabel) continue;
+
+            // Find the host widget on the SubgraphNode for this promoted input.
+            // ComfyUI stores it as input._widget (set in SubgraphNode._setWidget).
+            // Fall back to a widgetId match, then to a name match.
+            let hostWidget = input._widget;
+            if (!hostWidget && input.widgetId) {
+                hostWidget = subgraphNode.widgets?.find(w => w.widgetId === input.widgetId);
+            }
+            if (!hostWidget) {
+                hostWidget = subgraphNode.widgets?.find(w => w.name === input.name);
+            }
+            if (!hostWidget) continue;
+
+            // Set the label on the host widget. For store-backed projections
+            // (the _projectPromotedWidget path) the `label` setter writes
+            // through to the widget value store; for concrete widgets it sets
+            // the property directly. Also keep input.label in sync so a future
+            // re-resolution (_setWidget) picks up the corrected label.
+            hostWidget.label = groupLabel;
+            input.label = groupLabel;
+        }
+    } catch (e) {
+        console.warn("[Holaf] holafUpdatePromotedLabels error:", e);
+    }
+}
+
 // Separate extension: wrap onWidgetChanged on every SubgraphNode instance so
 // promoted widget toggles are forwarded to the interior Holaf nodes.
 app.registerExtension({
@@ -464,6 +542,29 @@ app.registerExtension({
                 holafHandlePromotedChange(this, name, value);
             } catch (e) {
                 console.warn("[Holaf] SubgraphWidgetChange handler error:", e);
+            }
+        };
+
+        // Fix promoted Holaf widget labels (group_name instead of "active").
+        // Interior nodes may not be resolved yet at nodeCreated time, so retry
+        // after the current tick.
+        try {
+            holafUpdatePromotedLabels(node);
+            setTimeout(() => holafUpdatePromotedLabels(node), 0);
+        } catch (e) {
+            console.warn("[Holaf] SubgraphWatcher label init error:", e);
+        }
+
+        // Refresh labels after a graph load/configure cycle: interior nodes
+        // are reconstructed during configure and may only be ready afterwards.
+        const originalConfigure = node.onConfigure;
+        node.onConfigure = function (o) {
+            if (originalConfigure) originalConfigure.call(this, o);
+            try {
+                holafUpdatePromotedLabels(this);
+                setTimeout(() => holafUpdatePromotedLabels(this), 0);
+            } catch (e) {
+                console.warn("[Holaf] SubgraphWatcher onConfigure label error:", e);
             }
         };
     }
