@@ -262,6 +262,13 @@ app.registerExtension({
                                 if (otherGroupWidget && otherActiveWidget && otherGroupWidget.value === groupName) {
                                     otherActiveWidget.value = newState;
                                     node.triggerBypassLogic(newState);
+                                    // If the target's "active" widget is promoted
+                                    // to a SubgraphNode, the interior value set
+                                    // above does not refresh the store-backed
+                                    // host widget on the SubgraphNode. Push the
+                                    // new value to the host widget too so the
+                                    // promoted visual stays in sync.
+                                    holafSyncPromotedHostWidget(node, otherActiveWidget, newState);
                                 }
                             }
                         }
@@ -525,6 +532,114 @@ function holafUpdatePromotedLabels(subgraphNode) {
     } catch (e) {
         console.warn("[Holaf] holafUpdatePromotedLabels error:", e);
     }
+}
+
+/*
+ * Promotion host sync helper.
+ *
+ * syncGroupState sets `otherActiveWidget.value = newState` on the interior
+ * Holaf node. When that interior widget is promoted to a SubgraphNode, the
+ * interior write alone does NOT update the store-backed host widget that the
+ * SubgraphNode renders (it reads from useWidgetValueStore). This helper
+ * resolves the promoted host widget from the interior node and pushes the
+ * same value to it, so the visible SubgraphNode widget stays in sync.
+ *
+ * Resolution path (interior node → host widget):
+ *   1. targetNode.getSlotFromWidget(activeWidget) → the interior input slot
+ *      linked to the SubgraphInput. slot.link != null  == promoted.
+ *   2. subgraph (targetNode.graph) .getLink(slot.link) → interior link.
+ *   3. link.origin_id === SubgraphInputNode id, link.origin_slot is the index
+ *      into subgraph.inputs → the SubgraphInput slot.
+ *   4. Walk the graph tree from the root graph to find the SubgraphNode whose
+ *      .subgraph === this subgraph (handles nesting).
+ *   5. On that SubgraphNode, find the input whose _subgraphSlot ===
+ *      SubgraphInput; its _widget is the store-backed host widget.
+ *   6. Set hostWidget.value = newState — the projected setter writes through
+ *      to useWidgetValueStore.setValue, refreshing the visual. The value
+ *      setter does not invoke the widget callback, so there is no reentrance
+ *      back into syncGroupState (and the _holafSyncingPerGraph flag is set
+ *      during the whole traverse anyway).
+ */
+function holafSyncPromotedHostWidget(targetNode, activeWidget, newState) {
+    try {
+        if (!targetNode || !activeWidget) return;
+        if (typeof targetNode.getSlotFromWidget !== 'function') return;
+
+        // Step 1: locate the interior input slot bound to the widget.
+        const slot = targetNode.getSlotFromWidget(activeWidget);
+        if (!slot || slot.link == null) return; // widget is not promoted
+
+        // Step 2: resolve the interior link inside the subgraph.
+        const subgraph = targetNode.graph;
+        if (!subgraph) return;
+        const linkId = slot.link;
+        const link = (typeof subgraph.getLink === 'function')
+            ? subgraph.getLink(linkId)
+            : (subgraph.links?.[linkId] ?? subgraph.links?.get?.(linkId));
+        if (!link) return;
+
+        // Step 3: the link originates from the SubgraphInputNode; origin_slot
+        // is the index into subgraph.inputs (the SubgraphInput list).
+        const subgraphInput = subgraph.inputs?.[link.origin_slot];
+        if (!subgraphInput) return;
+
+        // Step 4: find the SubgraphNode owning this subgraph. The subgraph
+        // object has no direct back-reference to its SubgraphNode, so walk the
+        // graph tree from the root graph (handles arbitrarily nested
+        // subgraphs).
+        const rootGraph = subgraph.rootGraph;
+        if (!rootGraph) return;
+        const subgraphNode = _holafFindSubgraphNodeBySubgraph(rootGraph, subgraph);
+        if (!subgraphNode) return;
+
+        // Step 5: resolve the SubgraphNode input slot for this SubgraphInput,
+        // then its store-backed host widget.
+        const hostInput = subgraphNode.inputs?.find(
+            (i) => i && i._subgraphSlot === subgraphInput
+        );
+        if (!hostInput) return;
+
+        let hostWidget = hostInput._widget;
+        if (!hostWidget && hostInput.widgetId) {
+            hostWidget = subgraphNode.widgets?.find(
+                (w) => w.widgetId === hostInput.widgetId
+            );
+        }
+        if (!hostWidget) return;
+
+        // Step 6: push the value through the projected widget. Its value
+        // setter writes to useWidgetValueStore.setValue, updating the visual
+        // rendered by the SubgraphNode. It does not invoke the callback, so
+        // this does not re-enter syncGroupState.
+        hostWidget.value = newState;
+    } catch (e) {
+        console.warn("[Holaf] holafSyncPromotedHostWidget error:", e);
+    }
+}
+
+// Recursive/iterative search: find the SubgraphNode whose .subgraph ===
+// targetSubgraph by walking the graph tree from the root. Visits each graph
+// once to avoid infinite loops on pathological cycles.
+function _holafFindSubgraphNodeBySubgraph(rootGraph, targetSubgraph) {
+    if (!rootGraph || !targetSubgraph) return null;
+    const stack = [rootGraph];
+    const seen = new Set();
+    while (stack.length) {
+        const graph = stack.pop();
+        if (!graph || seen.has(graph)) continue;
+        seen.add(graph);
+        const nodes = graph._nodes || graph.nodes;
+        if (!Array.isArray(nodes)) continue;
+        for (const node of nodes) {
+            if (!node) continue;
+            if (typeof node.isSubgraphNode === 'function' && node.isSubgraphNode()) {
+                if (node.subgraph === targetSubgraph) return node;
+                // Descend into nested subgraphs.
+                if (node.subgraph) stack.push(node.subgraph);
+            }
+        }
+    }
+    return null;
 }
 
 // Separate extension: wrap onWidgetChanged on every SubgraphNode instance so
