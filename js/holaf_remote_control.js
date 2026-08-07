@@ -52,7 +52,13 @@ app.registerExtension({
                     const groupWidget = this.widgets?.find(w => w.name === "group_name");
                     const activeWidget = this.widgets?.find(w => w.name === "active");
                     if (groupWidget && activeWidget) {
-                        activeWidget.label = groupWidget.value || "active";
+                        // Piste 2: If the "active" widget is promoted (its slot
+                        // is linked from outside the SubgraphNode), the promoted
+                        // slot drives the value — don't overwrite the label.
+                        const isPromoted = this.getSlotFromWidget && this.getSlotFromWidget(activeWidget)?.link != null;
+                        if (!isPromoted) {
+                            activeWidget.label = groupWidget.value || "active";
+                        }
                     }
                 }
 
@@ -349,5 +355,116 @@ app.registerExtension({
                 app.graph.change();
             };
         }
+    }
+});
+
+/*
+ * Piste 3 — SubgraphWatcher
+ *
+ * When a Holaf widget is promoted to the SubgraphNode and the user toggles it
+ * there, BaseWidget.setValue() calls node.onWidgetChanged(name, value, oldValue,
+ * widget) on the SubgraphNode. We wrap that hook to detect changes on promoted
+ * Holaf widgets and forward them to the interior Holaf node, mirroring exactly
+ * what the in-graph widget callback (setupRemoteLogic / setupRemoteSelectorLogic)
+ * does for the non-promoted case.
+ *
+ * Coexistence:
+ *   - Non-promoted: click interior widget -> interior callback -> sync/bypass
+ *   - Promoted:     click SubgraphNode widget -> onWidgetChanged -> watcher
+ *                   -> holafOnPromotedValueChange -> sync/bypass
+ */
+
+// Module-level: resolve the interior Holaf node(s) behind a promoted widget.
+function holafHandlePromotedChange(subgraphNode, widgetName, newValue) {
+    // The promoted widget name becomes the input slot name on the SubgraphNode.
+    const input = subgraphNode.inputs.find(i => i.name === widgetName);
+    if (!input || !input._subgraphSlot) return; // not a promoted input
+
+    // Skip if the slot is linked from outside — the value is being driven
+    // externally (e.g. by another node), not toggled by the user on the
+    // SubgraphNode widget. In that case the interior node should not be
+    // forced to follow.
+    if (input.link != null) return;
+
+    const subgraph = subgraphNode.subgraph;
+    if (!subgraph) return;
+
+    const holafTypes = [
+        HOLAF_BYPASSER_TYPE,
+        HOLAF_REMOTE_TYPE,
+        HOLAF_GROUP_BYPASSER_TYPE,
+        HOLAF_REMOTE_SELECTOR_TYPE
+    ];
+
+    // Each promoted input keeps a reference to its SubgraphInput slot, whose
+    // linkIds point at interior links inside the subgraph. Resolve them to
+    // find the interior node that actually owns the original widget.
+    for (const linkId of input._subgraphSlot.linkIds) {
+        const link = (typeof subgraph.getLink === "function")
+            ? subgraph.getLink(linkId)
+            : subgraph._links?.get(linkId);
+        if (!link) continue;
+
+        const interiorNode = subgraph.getNodeById(link.target_id);
+        if (!interiorNode) continue;
+        if (!holafTypes.includes(interiorNode.type)) continue;
+
+        holafOnPromotedValueChange(interiorNode, newValue);
+    }
+}
+
+// Module-level: apply the promoted toggle to the interior Holaf node, mirroring
+// the in-graph widget callback logic. Shares the same reentrance guard
+// (_holafSyncingPerGraph) as syncGroupState to prevent recursive loops.
+function holafOnPromotedValueChange(interiorNode, newValue) {
+    // Use the root graph for the reentrance guard, consistent with the
+    // non-promoted callbacks that use app.graph.
+    const graph = app.graph || interiorNode.graph?.rootGraph;
+    if (!graph) return;
+
+    // Reentrance guard — same mechanism as syncGroupState.
+    if (_holafSyncingPerGraph.get(graph)) return;
+
+    if (interiorNode.type === HOLAF_REMOTE_SELECTOR_TYPE) {
+        const listWidget = interiorNode.widgets?.find(w => w.name === "group_list");
+        const activeWidget = interiorNode.widgets?.find(w => w.name === "active_group");
+        if (!listWidget || !activeWidget) return;
+
+        activeWidget.value = newValue;
+
+        const allGroups = listWidget.value.split("\n").map(s => s.trim()).filter(s => s);
+        allGroups.forEach(groupName => {
+            const isActive = (groupName === newValue);
+            interiorNode.syncGroupState(graph, groupName, isActive);
+        });
+    } else {
+        // HolafBypasser / HolafRemote / HolafGroupBypasser
+        const groupWidget = interiorNode.widgets?.find(w => w.name === "group_name");
+        const activeWidget = interiorNode.widgets?.find(w => w.name === "active");
+        if (!groupWidget || !activeWidget) return;
+
+        activeWidget.value = newValue;
+        interiorNode.syncGroupState(graph, groupWidget.value, newValue);
+        interiorNode.triggerBypassLogic(newValue);
+    }
+}
+
+// Separate extension: wrap onWidgetChanged on every SubgraphNode instance so
+// promoted widget toggles are forwarded to the interior Holaf nodes.
+app.registerExtension({
+    name: "holaf.SubgraphWatcher",
+
+    nodeCreated(node) {
+        if (!node.isSubgraphNode || !node.isSubgraphNode()) return;
+
+        const original = node.onWidgetChanged;
+        node.onWidgetChanged = function (name, value, oldValue, widget) {
+            if (original) original.call(this, name, value, oldValue, widget);
+            try {
+                holafHandlePromotedChange(this, name, value);
+            } catch (e) {
+                console.warn("[Holaf] SubgraphWidgetChange handler error:", e);
+            }
+        };
     }
 });
