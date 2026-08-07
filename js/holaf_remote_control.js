@@ -20,12 +20,6 @@ const HOLAF_REMOTE_SELECTOR_TYPE = "HolafRemoteSelector";
 // Scoped per-graph to avoid interference across multiple graph instances.
 const _holafSyncingPerGraph = new WeakMap();
 
-// Tracks HOST widgets (a Holaf widget promoted onto a SubgraphNode) whose
-// callback has been chained by this extension, together with their original
-// store-backed callback so it can be restored on widget-demoted.
-// Keyed by the host widget instance (WeakMap => no leaks on removal).
-const _holafChainedHostWidgets = new WeakMap();
-
 app.registerExtension({
     name: "holaf.RemoteControl",
 
@@ -46,28 +40,6 @@ app.registerExtension({
                 if (this.type === HOLAF_GROUP_BYPASSER_TYPE) {
                     this.setupGroupSelector();
                 }
-
-                this.setupSubgraphListener();
-            };
-
-            // --- 1b. SUBGRAPH LISTENER LIFECYCLE ---
-            // Bind/unbind the subgraph promotion listeners whenever the node is
-            // (re)attached to a graph or removed. onAdded fires both when creating
-            // a node and when it is dragged into a subgraph (onAdded is called with
-            // this.graph already set to the Subgraph instance).
-            const onAdded = nodeType.prototype.onAdded;
-            nodeType.prototype.onAdded = function () {
-                if (onAdded) onAdded.apply(this, arguments);
-                this.setupSubgraphListener();
-            };
-
-            const onRemoved = nodeType.prototype.onRemoved;
-            nodeType.prototype.onRemoved = function () {
-                if (this._holafSubgraphAbortController) {
-                    this._holafSubgraphAbortController.abort();
-                    this._holafSubgraphAbortController = null;
-                }
-                if (onRemoved) onRemoved.apply(this, arguments);
             };
 
             // --- 2. UPDATE ON LOAD ---
@@ -101,8 +73,6 @@ app.registerExtension({
                 if (this.type === HOLAF_BYPASSER_TYPE) {
                     setTimeout(() => this.checkDynamicSlots(), 100);
                 }
-
-                this.setupSubgraphListener();
             };
 
             // --- 3. DYNAMIC INPUTS LISTENER ---
@@ -159,7 +129,11 @@ app.registerExtension({
                 const originalActiveCallback = activeWidget.callback;
                 activeWidget.callback = (value) => {
                     if (originalActiveCallback) originalActiveCallback(value);
-                    this.runRemoteLogic(value);
+                    if (_holafSyncingPerGraph.get(app.graph)) return;
+
+                    const groupName = groupWidget.value;
+                    this.syncGroupState(app.graph, groupName, value);
+                    this.triggerBypassLogic(value);
                 };
             };
 
@@ -222,23 +196,7 @@ app.registerExtension({
                 // Logic on Selection Change
                 // We assign the callback directly to the (potentially new) widget
                 activeWidget.callback = (value) => {
-                    this.runRemoteLogic(value);
-                };
-
-                // Initial run to populate the list based on current text
-                updateDropdownOptions();
-            };
-
-            // --- SHARED REMOTE LOGIC ---
-            // Single source of truth for the "active" / "active_group" state
-            // propagation. Used by the interior widget callbacks (non-promoted
-            // nodes) AND by the chained host widget callback (promoted nodes).
-            nodeType.prototype.runRemoteLogic = function (value) {
-                if (_holafSyncingPerGraph.get(app.graph)) return;
-
-                if (this.type === HOLAF_REMOTE_SELECTOR_TYPE) {
-                    const listWidget = this.widgets.find(w => w.name === "group_list");
-                    if (!listWidget) return;
+                    if (_holafSyncingPerGraph.get(app.graph)) return;
 
                     const allGroups = listWidget.value.split("\n").map(s => s.trim()).filter(s => s);
 
@@ -246,121 +204,10 @@ app.registerExtension({
                         const isActive = (groupName === value);
                         this.syncGroupState(app.graph, groupName, isActive);
                     });
-                } else {
-                    const groupWidget = this.widgets.find(w => w.name === "group_name");
-                    if (!groupWidget) return;
+                };
 
-                    this.syncGroupState(app.graph, groupWidget.value, value);
-                    this.triggerBypassLogic(value);
-                }
-            };
-
-            // --- SUBGRAPH WIDGET PROMOTION SYNC ---
-            // Since ComfyUI frontend >= 1.41.20, when a Holaf widget ("active" /
-            // "active_group") is promoted into a subgraph, the store-backed host
-            // widget on the SubgraphNode only writes to useWidgetValueStore and no
-            // longer calls the interior widget callback, so syncGroupState() and
-            // triggerBypassLogic() never run.
-            //
-            // Events are dispatched on subgraph.events with
-            // { widget, subgraphNode } (see docs.comfy.org/custom-nodes/js/subgraphs).
-            // We chain the HOST widget callback: original store write first, then
-            // the usual runRemoteLogic() (syncGroupState + triggerBypassLogic).
-            nodeType.prototype.setupSubgraphListener = function () {
-                // Rebind idempotently: abort any previous listener first.
-                if (this._holafSubgraphAbortController) {
-                    this._holafSubgraphAbortController.abort();
-                    this._holafSubgraphAbortController = null;
-                }
-
-                const subgraph = this.graph;
-                // A Subgraph exposes `inputNode`; the root graph does not. This is
-                // how we only listen on subgraphs containing this node.
-                if (!subgraph || !subgraph.inputNode || !subgraph.events ||
-                    typeof subgraph.events.addEventListener !== 'function') return;
-
-                const controller = new AbortController();
-                this._holafSubgraphAbortController = controller;
-                const { signal } = controller;
-
-                subgraph.events.addEventListener('widget-promoted', (e) => {
-                    const interiorWidget = e.detail?.widget;
-                    const hostNode = e.detail?.subgraphNode;
-                    if (!interiorWidget || !hostNode) return;
-
-                    // Only handle widgets belonging to this node (identity check:
-                    // the event carries the same widget object as node.widgets).
-                    if (!this.widgets || !this.widgets.includes(interiorWidget)) return;
-                    if (interiorWidget.name !== 'active' && interiorWidget.name !== 'active_group') return;
-
-                    const hostInput = this.findPromotedHostInput(hostNode, interiorWidget);
-                    if (!hostInput) return;
-
-                    const hostWidget = hostInput._widget || hostNode.getWidgetFromSlot?.(hostInput);
-                    if (!hostWidget || typeof hostWidget.callback !== 'function') return;
-
-                    // Anti-doublon: never chain the same host widget twice.
-                    if (_holafChainedHostWidgets.has(hostWidget)) return;
-
-                    const originalCallback = hostWidget.callback;
-                    _holafChainedHostWidgets.set(hostWidget, { originalCallback });
-
-                    hostWidget.callback = (value) => {
-                        // 1. Original store-backed write (useWidgetValueStore).
-                        originalCallback(value);
-                        // 2. Then the usual sync + bypass logic on this interior node.
-                        this.runRemoteLogic(value);
-                    };
-                }, { signal });
-
-                subgraph.events.addEventListener('widget-demoted', (e) => {
-                    const widget = e.detail?.widget;
-                    const hostNode = e.detail?.subgraphNode;
-                    if (!widget) return;
-
-                    // On demotion the payload widget is the projected HOST widget.
-                    let hostWidget = _holafChainedHostWidgets.has(widget) ? widget : null;
-
-                    // Fallback: resolve the host widget from the subgraph node inputs
-                    // (covers payloads carrying the interior widget instead).
-                    if (!hostWidget && hostNode && hostNode.inputs) {
-                        const hostInput = hostNode.inputs.find(input =>
-                            (input.widget && input.widget.name === widget.name) ||
-                            input.name === widget.name
-                        );
-                        if (hostInput) {
-                            hostWidget = hostInput._widget || hostNode.getWidgetFromSlot?.(hostInput) || null;
-                        }
-                    }
-
-                    if (!hostWidget) return;
-                    const entry = _holafChainedHostWidgets.get(hostWidget);
-                    if (!entry) return;
-
-                    hostWidget.callback = entry.originalCallback;
-                    _holafChainedHostWidgets.delete(hostWidget);
-                }, { signal });
-            };
-
-            // Finds the host input on a SubgraphNode for a promoted interior widget.
-            // Primary match resolves the actual subgraph slot connection (robust even
-            // when the input was renamed / uniquified, e.g. "active2"); falls back to
-            // a unique name match for the common widget-name promotion case.
-            nodeType.prototype.findPromotedHostInput = function (hostNode, interiorWidget) {
-                const inputs = hostNode.inputs || [];
-                if (inputs.length === 0) return null;
-
-                for (const input of inputs) {
-                    const slot = input._subgraphSlot;
-                    if (!slot || typeof slot.getConnectedWidgets !== 'function') continue;
-                    if (slot.getConnectedWidgets().includes(interiorWidget)) return input;
-                }
-
-                const name = interiorWidget.name;
-                const sameName = inputs.filter(input =>
-                    (input.widget && input.widget.name === name) || input.name === name
-                );
-                return sameName.length === 1 ? sameName[0] : null;
+                // Initial run to populate the list based on current text
+                updateDropdownOptions();
             };
 
             // --- GROUP SELECTOR LOGIC (Simplified) ---
