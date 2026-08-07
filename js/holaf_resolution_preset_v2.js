@@ -23,6 +23,18 @@ const DEFAULT_MULTIPLE = 16;
 // Models without an HD (quality) variant: the HD checkbox is visible but disabled.
 const NO_HD_MODELS = new Set(["SD1.5", "SDXL", "Nucleus-Image", "Qwen"]);
 
+// Libellés affichés du select aspect_ratio en mode Landscape.
+// Les VALEURS des options restent les shorts de base ("9:16" etc.) pour la
+// sérialisation — seul le texte affiché bascule selon l'orientation.
+const LANDSCAPE_ASPECT_LABELS = {
+    "9:16": "16:9",
+    "2:3": "3:2",
+    "3:4": "4:3",
+    "4:5": "5:4",
+    "1:1": "1:1",
+    "Random": "Random"
+};
+
 // Compact height (px) of the DOM widget area (3 rows + gaps + padding).
 const DOM_WIDGET_HEIGHT = 96;
 
@@ -38,6 +50,15 @@ function buildSelect(options) {
         select.appendChild(option);
     }
     return select;
+}
+
+// Met à jour les libellés affichés du select aspect_ratio selon l'orientation,
+// sans modifier la valeur sélectionnée (les valeurs internes restent inchangées).
+function updateAspectLabels(select, isLandscape) {
+    for (const option of select.options) {
+        const base = String(option.value);
+        option.textContent = isLandscape ? (LANDSCAPE_ASPECT_LABELS[base] ?? base) : base;
+    }
 }
 
 // Masque un widget réel sans le détruire (il reste la source de sérialisation).
@@ -194,6 +215,8 @@ app.registerExtension({
             });
 
             const aspectSelect = buildSelect(ASPECT_OPTIONS);
+            // Libellés initiaux (portrait) — les valeurs internes restent les shorts.
+            updateAspectLabels(aspectSelect, false);
             Object.assign(aspectSelect.style, {
                 flex: "1 1 auto",
                 minWidth: "0",
@@ -294,8 +317,12 @@ app.registerExtension({
                 orientationButton.style.opacity = orientationDisabled ? "0.45" : "1";
                 orientationButton.textContent = widgets.orientation.value ? "⇄ Landscape" : "⇄ Portrait";
 
+                // Bascule les libellés du select aspect_ratio selon l'orientation
+                // (la valeur sélectionnée est préservée : seul le texte change).
+                updateAspectLabels(aspectSelect, !!widgets.orientation.value);
+
                 // Ligne 3 — toggle Image Ratio
-                ratioButton.textContent = useImageRatio ? "🔗 Image Ratio : ON" : "🔗 Image Ratio : OFF";
+                ratioButton.textContent = useImageRatio ? "🔗 Use Image Ratio : ON" : "🔗 Use Image Ratio : OFF";
             };
 
             // Relit les widgets réels (valeurs restaurées au chargement) vers le DOM.
