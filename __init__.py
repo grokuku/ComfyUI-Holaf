@@ -51,6 +51,9 @@ from .nodes.holaf_auto_select_x2 import HolafAutoSelectX2
 # New Remote Selector Node
 from .nodes.holaf_remote_selector import HolafRemoteSelector
 
+# New Simple Bypasser Node
+from .nodes.holaf_simple_bypasser import HolafSimpleBypasser
+
 # Nucleus-Image node (optional — requires diffusers >= 0.38)
 # Protected import: if diffusers is not installed or too old, the node is
 # simply skipped so the rest of the pack keeps working.
@@ -92,6 +95,7 @@ NODE_CLASS_MAPPINGS = {
     "HolafBundleExtractor": HolafBundleExtractor,
     "HolafAutoSelectX2": HolafAutoSelectX2,
     "HolafRemoteSelector": HolafRemoteSelector,
+    "HolafSimpleBypasser": HolafSimpleBypasser,
 }
 
 # Maps internal class names to a user-friendly display name for the ComfyUI menu.
@@ -123,6 +127,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "HolafBundleExtractor": "Bundle Extractor (Holaf)",
     "HolafAutoSelectX2": "Auto Select x2 (Holaf)",
     "HolafRemoteSelector": "Remote Selector (Holaf)",
+    "HolafSimpleBypasser": "Simple Bypasser (Holaf)",
 }
 
 # Conditionally register the Nucleus-Image node

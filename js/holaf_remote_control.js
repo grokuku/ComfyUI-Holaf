@@ -14,6 +14,7 @@ const HOLAF_BYPASSER_TYPE = "HolafBypasser";
 const HOLAF_GROUP_BYPASSER_TYPE = "HolafGroupBypasser";
 const HOLAF_REMOTE_TYPE = "HolafRemote";
 const HOLAF_REMOTE_SELECTOR_TYPE = "HolafRemoteSelector";
+const HOLAF_SIMPLE_BYPASSER_TYPE = "HolafSimpleBypasser";
 
 // IS_SYNCING prevents recursive group state synchronization.
 // JavaScript is single-threaded, so this flag is sufficient.
@@ -24,14 +25,16 @@ app.registerExtension({
     name: "holaf.RemoteControl",
 
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
-        if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE, HOLAF_REMOTE_SELECTOR_TYPE].includes(nodeData.name)) {
+        if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE, HOLAF_REMOTE_SELECTOR_TYPE, HOLAF_SIMPLE_BYPASSER_TYPE].includes(nodeData.name)) {
 
             // --- 1. SETUP ON CREATION ---
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 if (onNodeCreated) onNodeCreated.apply(this, arguments);
 
-                if (this.type === HOLAF_REMOTE_SELECTOR_TYPE) {
+                if (this.type === HOLAF_SIMPLE_BYPASSER_TYPE) {
+                    this.setupSimpleBypassLogic();
+                } else if (this.type === HOLAF_REMOTE_SELECTOR_TYPE) {
                     this.setupRemoteSelectorLogic();
                 } else {
                     this.setupRemoteLogic();
@@ -78,6 +81,11 @@ app.registerExtension({
                 // Fix Dynamic Slots
                 if (this.type === HOLAF_BYPASSER_TYPE) {
                     setTimeout(() => this.checkDynamicSlots(), 100);
+                }
+
+                // Re-apply setupSimpleBypassLogic (restore widget.hidden=true)
+                if (this.type === HOLAF_SIMPLE_BYPASSER_TYPE) {
+                    this.setupSimpleBypassLogic();
                 }
             };
 
@@ -216,6 +224,23 @@ app.registerExtension({
                 updateDropdownOptions();
             };
 
+            // --- CORE LOGIC : SIMPLE BYPASSER ---
+            nodeType.prototype.setupSimpleBypassLogic = function () {
+                const groupWidget = this.widgets.find(w => w.name === "group_name");
+                const activeWidget = this.widgets.find(w => w.name === "active");
+                const invertWidget = this.widgets.find(w => w.name === "invert");
+                // Cacher le widget "active" — piloté par syncGroupState, pas par l'utilisateur
+                if (activeWidget) activeWidget.hidden = true;
+                if (!invertWidget) return;
+                // Callback sur "invert" : re-évaluer le bypass avec la valeur active courante. LOCAL, pas de syncGroupState.
+                const originalInvertCallback = invertWidget.callback;
+                invertWidget.callback = (value) => {
+                    if (originalInvertCallback) originalInvertCallback(value);
+                    const currentActive = activeWidget ? activeWidget.value : false;
+                    this.triggerBypassLogic(currentActive);
+                };
+            };
+
             // --- GROUP SELECTOR LOGIC (Simplified) ---
             nodeType.prototype.setupGroupSelector = function () {
                 const comfyGroupWidget = this.widgets.find(w => w.name === "comfy_group");
@@ -255,7 +280,7 @@ app.registerExtension({
                             if (node === this) continue;
                             if (node.subgraph && typeof node.subgraph === 'object') traverse(node.subgraph);
 
-                            if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE].includes(node.type)) {
+                            if ([HOLAF_BYPASSER_TYPE, HOLAF_REMOTE_TYPE, HOLAF_GROUP_BYPASSER_TYPE, HOLAF_SIMPLE_BYPASSER_TYPE].includes(node.type)) {
                                 const otherGroupWidget = node.widgets.find(w => w.name === "group_name");
                                 const otherActiveWidget = node.widgets.find(w => w.name === "active");
 
@@ -285,6 +310,8 @@ app.registerExtension({
                     this.handleStandardBypass(isActive);
                 } else if (this.type === HOLAF_GROUP_BYPASSER_TYPE) {
                     this.handleGroupBypass(isActive);
+                } else if (this.type === HOLAF_SIMPLE_BYPASSER_TYPE) {
+                    this.handleSimpleBypass(isActive);
                 }
                 // HolafRemote and HolafRemoteSelector have no internal bypass logic to trigger
             };
@@ -316,6 +343,30 @@ app.registerExtension({
                             if (input.link) updateLink(input.link);
                         }
                     }
+                }
+                app.graph.change();
+            };
+
+            // --- LOGIC: SIMPLE BYPASSER ---
+            nodeType.prototype.handleSimpleBypass = function (isActive) {
+                const invertWidget = this.widgets.find(w => w.name === "invert");
+                const invert = invertWidget ? invertWidget.value : false;
+                // Normal (invert=false) : bypass quand groupe OFF → shouldBypass = !isActive
+                // Inverted (invert=true) : bypass quand groupe ON → shouldBypass = isActive
+                const shouldBypass = invert ? isActive : !isActive;
+                const targetMode = shouldBypass ? MODE_BYPASS : MODE_ALWAYS;
+                const graph = this.graph;
+                if (!graph) return;
+                const updateLink = (linkId) => {
+                    if (!linkId) return;
+                    const link = graph.links[linkId];
+                    if (!link) return;
+                    const node = graph.getNodeById(link.origin_id);
+                    if (node && node.mode !== targetMode) node.mode = targetMode;
+                };
+                const inputSlot = this.findInputSlot("input");
+                if (inputSlot !== -1 && this.inputs[inputSlot].link) {
+                    updateLink(this.inputs[inputSlot].link);
                 }
                 app.graph.change();
             };
@@ -400,7 +451,8 @@ function holafHandlePromotedChange(subgraphNode, widgetName, newValue) {
         HOLAF_BYPASSER_TYPE,
         HOLAF_REMOTE_TYPE,
         HOLAF_GROUP_BYPASSER_TYPE,
-        HOLAF_REMOTE_SELECTOR_TYPE
+        HOLAF_REMOTE_SELECTOR_TYPE,
+        HOLAF_SIMPLE_BYPASSER_TYPE
     ];
 
     // Each promoted input keeps a reference to its SubgraphInput slot, whose
@@ -416,7 +468,7 @@ function holafHandlePromotedChange(subgraphNode, widgetName, newValue) {
         if (!interiorNode) continue;
         if (!holafTypes.includes(interiorNode.type)) continue;
 
-        holafOnPromotedValueChange(interiorNode, newValue);
+        holafOnPromotedValueChange(interiorNode, widgetName, newValue);
     }
 
     // Keep the host widget label in sync after a promoted toggle (matters for
@@ -427,7 +479,7 @@ function holafHandlePromotedChange(subgraphNode, widgetName, newValue) {
 // Module-level: apply the promoted toggle to the interior Holaf node, mirroring
 // the in-graph widget callback logic. Shares the same reentrance guard
 // (_holafSyncingPerGraph) as syncGroupState to prevent recursive loops.
-function holafOnPromotedValueChange(interiorNode, newValue) {
+function holafOnPromotedValueChange(interiorNode, widgetName, newValue) {
     // Use the root graph for the reentrance guard, consistent with the
     // non-promoted callbacks that use app.graph.
     const graph = app.graph || interiorNode.graph?.rootGraph;
@@ -448,6 +500,24 @@ function holafOnPromotedValueChange(interiorNode, newValue) {
             const isActive = (groupName === newValue);
             interiorNode.syncGroupState(graph, groupName, isActive);
         });
+    } else if (interiorNode.type === HOLAF_SIMPLE_BYPASSER_TYPE) {
+        const activeWidget = interiorNode.widgets?.find(w => w.name === "active");
+        const invertWidget = interiorNode.widgets?.find(w => w.name === "invert");
+
+        if (widgetName === "invert") {
+            // invert est local : on met à jour la valeur et on re-évalue le bypass
+            // avec la valeur active courante. NE PAS appeler syncGroupState.
+            if (invertWidget) invertWidget.value = newValue;
+            const currentActive = activeWidget ? activeWidget.value : false;
+            interiorNode.triggerBypassLogic(currentActive);
+        } else {
+            // "active" (ou autre) : même logique que les autres types
+            if (!activeWidget) return;
+            const groupWidget = interiorNode.widgets?.find(w => w.name === "group_name");
+            activeWidget.value = newValue;
+            interiorNode.syncGroupState(graph, groupWidget?.value || "", newValue);
+            interiorNode.triggerBypassLogic(newValue);
+        }
     } else {
         // HolafBypasser / HolafRemote / HolafGroupBypasser
         const groupWidget = interiorNode.widgets?.find(w => w.name === "group_name");
@@ -475,7 +545,8 @@ function holafUpdatePromotedLabels(subgraphNode) {
             HOLAF_BYPASSER_TYPE,
             HOLAF_REMOTE_TYPE,
             HOLAF_GROUP_BYPASSER_TYPE,
-            HOLAF_REMOTE_SELECTOR_TYPE
+            HOLAF_REMOTE_SELECTOR_TYPE,
+            HOLAF_SIMPLE_BYPASSER_TYPE
         ];
 
         for (const input of subgraphNode.inputs || []) {
