@@ -17,6 +17,10 @@ const MODEL_OPTIONS = ["SD1.5", "SDXL", "FLUX", "Z-Image", "Ideogram4", "Krea2 T
 const ASPECT_OPTIONS = ["9:16", "2:3", "3:4", "4:5", "1:1", "Random"];
 const MULTIPLE_OPTIONS = [8, 16, 32, 64];
 
+// Map d'affichage landscape : seul le textContent de l'option change,
+// la value interne reste le short de base ("9:16" etc.).
+const LANDSCAPE_LABELS = { "9:16": "16:9", "2:3": "3:2", "3:4": "4:3", "4:5": "5:4", "1:1": "1:1", "Random": "Random" };
+
 const DEFAULT_MEGAPIXELS = 2.50;
 const DEFAULT_MULTIPLE = 16;
 
@@ -38,6 +42,17 @@ function buildSelect(options) {
         select.appendChild(option);
     }
     return select;
+}
+
+// Met à jour le texte affiché des options d'un <select> aspect_ratio selon
+// le mode orientation. Seul option.textContent est réécrit — la value
+// interne reste le short de base ("9:16" etc.) pour préserver la sérialisation.
+function updateAspectLabels(select, isLandscape) {
+    for (const option of select.options) {
+        const base = option.value;
+        const mapped = isLandscape ? (LANDSCAPE_LABELS[base] || base) : base;
+        option.textContent = mapped;
+    }
 }
 
 // Masque un widget réel sans le détruire (il reste la source de sérialisation).
@@ -294,8 +309,12 @@ app.registerExtension({
                 orientationButton.style.opacity = orientationDisabled ? "0.45" : "1";
                 orientationButton.textContent = widgets.orientation.value ? "⇄ Landscape" : "⇄ Portrait";
 
+                // Ligne 2b — libellés landscape des options aspect_ratio
+                const isLandscape = !!widgets.orientation.value;
+                updateAspectLabels(aspectSelect, isLandscape);
+
                 // Ligne 3 — toggle Image Ratio
-                ratioButton.textContent = useImageRatio ? "🔗 Image Ratio : ON" : "🔗 Image Ratio : OFF";
+                ratioButton.textContent = useImageRatio ? "🔗 Use Image Ratio : ON" : "🔗 Use Image Ratio : OFF";
             };
 
             // Relit les widgets réels (valeurs restaurées au chargement) vers le DOM.
