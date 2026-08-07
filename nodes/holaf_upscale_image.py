@@ -30,10 +30,10 @@ class UpscaleImageHolaf:
     Upscales an image using a chosen model (e.g., ESRGAN) to a target
     megapixel count. This provides flexible size control, independent of the
     model's native scale factor (e.g., 4x).
-    Now supports enforcing resolution multiples (8, 16) and fitting strategies (Stretch, Crop, Pad).
+    Now supports enforcing resolution multiples (8, 16, 32, 64) and fitting strategies (Stretch, Crop, Pad).
     """
     upscale_methods = ["nearest-exact", "bilinear", "area", "bicubic", "lanczos"]
-    multiples = ["None", "8", "16"]
+    multiples = ["None", "8", "16", "32", "64"]
     resize_modes = ["stretch", "crop", "pad"]
 
     @classmethod

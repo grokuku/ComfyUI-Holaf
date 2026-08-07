@@ -26,6 +26,7 @@ from .nodes.holaf_image_comparer import HolafImageComparer
 from .nodes.holaf_upscale_image import UpscaleImageHolaf
 from .nodes.holaf_overlay import HolafOverlayNode
 from .nodes.holaf_resolution_preset import HolafResolutionPreset
+from .nodes.holaf_resolution_preset_v2 import HolafResolutionPresetV2
 from .nodes.holaf_instagram_resize import HolafInstagramResize
 from .nodes.holaf_lut_generator import HolafLutGenerator
 from .nodes.holaf_lut_saver import HolafLutSaver
@@ -72,6 +73,7 @@ NODE_CLASS_MAPPINGS = {
     "UpscaleImageHolaf": UpscaleImageHolaf,
     "HolafOverlayNode": HolafOverlayNode,
     "HolafResolutionPreset": HolafResolutionPreset,
+    "HolafResolutionPresetV2": HolafResolutionPresetV2,
     "HolafInstagramResize": HolafInstagramResize,
     "HolafLutGenerator": HolafLutGenerator,
     "HolafLutSaver": HolafLutSaver,
@@ -102,6 +104,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UpscaleImageHolaf": "Upscale (Holaf)",
     "HolafOverlayNode": "Overlay (Holaf)",
     "HolafResolutionPreset": "Resolution Preset (Holaf)",
+    "HolafResolutionPresetV2": "Resolution Preset v2 (Holaf)",
     "HolafInstagramResize": "Instagram Resize (Holaf)",
     "HolafLutGenerator": "LUT Generator (Holaf)",
     "HolafLutSaver": "LUT Saver (Holaf)",
